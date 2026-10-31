@@ -14,6 +14,8 @@ from qe.core.schemas import RunRecord, TestCase
 from qe.ports import (
     BudgetExceededError,
     KillSwitchError,
+    SandboxLimits,
+    SandboxPort,
     SandboxSession,
     TargetPort,
     TargetRequest,
@@ -81,3 +83,19 @@ def _log_missing(ledger: Ledger, remaining: Sequence[tuple[TestCase, int]], reas
     ledger.append(Event(key=f"missing:{keys[0]}", type=EventType.MISSING_EVIDENCE,
                         producer=PRODUCER, producer_kind=ProducerKind.DETERMINISTIC,
                         payload={"reason": reason, "unrun": keys}))
+
+
+class ExecutorAPI:
+    """Hand-off surface for other teams: run test cases -> RUN_RECORDED events."""
+
+    def __init__(self, ledger: Ledger, sandbox: SandboxPort, limits: SandboxLimits) -> None:
+        self._ledger, self._sandbox, self._limits = ledger, sandbox, limits
+
+    async def run_cases(
+        self, target: TargetPort, cases: Sequence[TestCase], *, repeats: int = 1, seed: int = 0,
+        want_trace: bool = True, should_stop: Callable[[], bool] = lambda: False,
+    ) -> list[str]:
+        """Keys recorded by this call; re-calling with the same args returns [] (resume)."""
+        async with self._sandbox.session(self._limits) as session:
+            return await execute(self._ledger, target, cases, repeats=repeats, seed=seed,
+                                 session=session, want_trace=want_trace, should_stop=should_stop)

@@ -33,6 +33,8 @@ def build_pack(ledger: Ledger, policy: Policy, confidence: float = 0.95) -> dict
     entries = list(ledger.entries())
     runs = [e for e in entries if e.event.type is EventType.RUN_RECORDED]
     levels = sorted({e.event.payload["visibility_level"] for e in runs})
+    profiles = [e.event.payload for e in entries
+                if e.event.type is EventType.CAPABILITY_INVENTORY]
     errors = sorted(e.event.key for e in runs if e.event.payload.get("error"))
     missing = sorted(k for e in entries if e.event.type is EventType.MISSING_EVIDENCE
                      for k in e.event.payload.get("unrun", []))
@@ -71,7 +73,7 @@ def build_pack(ledger: Ledger, policy: Policy, confidence: float = 0.95) -> dict
     return {
         "ledger": {"entries": len(entries), "head": ledger.head(),
                    "verified": ledger.verify().ok},
-        "access": {"visibility_levels": levels,
+        "access": {"visibility_levels": levels, "profiles": profiles,
                    "note": "Findings cannot be localised below this access level."},
         "runs": {"recorded": len(runs), "with_errors": errors, "unrun_budget_or_kill": missing},
         "policy": {"id": policy.policy_id, "version": policy.version,
@@ -81,6 +83,11 @@ def build_pack(ledger: Ledger, policy: Policy, confidence: float = 0.95) -> dict
         "human_signoff": "REQUIRED before any RELEASE (none recorded in v0)",
         "claims_not_made": list(CLAIMS_NOT_MADE),
     }
+
+
+def build_evidence_pack(ledger: Ledger, policy: Policy) -> dict[str, Any]:
+    """Stable hand-off name (docs/TEAM_PROMPTS.md): ledger + policy -> pack."""
+    return build_pack(ledger, policy)
 
 
 def render_json(pack: dict[str, Any]) -> str:
