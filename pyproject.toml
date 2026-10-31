@@ -8,12 +8,27 @@ dependencies = ["pydantic>=2.7", "pyyaml>=6", "typer>=0.12"]
 [project.optional-dependencies]
 deepeval = []  # pinned in M3 behind VerifierPort
 ragas = []     # pinned in M2 behind GeneratorPort
+ui = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 qe = "qe.cli.main:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "hypothesis>=6", "syrupy>=4", "ruff>=0.5", "mypy>=1.10", "types-PyYAML"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6",
+    "syrupy>=4",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML",
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+]
 
 [build-system]
 requires = ["hatchling"]

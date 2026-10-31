@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>qe: release evidence</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <nav class="rail" aria-label="Runs">
+    <div class="brand">qe<small>Release evidence for LLM apps</small></div>
+    <h3 class="runs-h">Runs</h3>
+    <ul class="run-list" id="run-list"></ul>
+    <label class="sr-only" for="run-select">Run</label>
+    <select class="rail-select" id="run-select"></select>
+    <h3>Demo data</h3>
+    <button class="btn" id="demo-btn" type="button">Regenerate demo runs</button>
+    <p class="eyebrow" id="demo-status" role="status" style="margin-top: var(--space-2)"></p>
+  </nav>
+  <main id="main" tabindex="-1" aria-live="polite">
+    <p class="empty">Loading runs…</p>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
