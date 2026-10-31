@@ -10,3 +10,4 @@ __pycache__/
 *.sqlite-shm
 runs/
 .playwright-mcp/
+.env.*

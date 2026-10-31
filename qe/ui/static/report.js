@@ -8,7 +8,9 @@ const SURFACE = {
 
 function labels(r) {
   const row = el("div", { class: "labels" });
-  row.append(tag("SIMULATED generation", "t-sim"), tag("FakeLLM sandbox target", "t-sim"),
+  const real = r.labels.mode === "real";
+  row.append(tag(real ? `REAL tester model: ${r.scenario.tester_model}` : "SIMULATED generation", real ? "t-warn" : "t-sim"),
+    tag(real ? `REAL target model: ${r.scenario.target_model}` : "FakeLLM sandbox target", real ? "t-warn" : "t-sim"),
     tag(r.labels.policy, "t-warn"));
   return row;
 }
@@ -65,7 +67,9 @@ function generationSection(r) {
     el("p", {}, `${g.drafted} tests drafted from the risk scenario and the application's own sources; ` +
       `${g.rejected_drafts} rejected by the verbatim-evidence gate; ${Object.keys(g.redundant).length} removed as redundant; ` +
       `${g.tests.length} executed. Drafts are proposals; only validated tests run.`),
-    el("p", { class: "notice" }, "Generation is simulated (a deterministic stand-in that varies questions per risk, source and prior failure). It is not a real model."),
+    el("p", { class: "notice" }, r.labels.mode === "real"
+      ? "Tests were drafted by a real model and a simulated second author; every draft passed the same verbatim-evidence gate. Attacks and regression are not run against the real target."
+      : "Generation is simulated (a deterministic stand-in that varies questions per risk, source and prior failure). It is not a real model."),
     el("details", {}, el("summary", {}, `Generated tests${more}`),
       table(["Question sent to the app", "Expected (source sentence)", "Source", "Author family"], rows)));
 }

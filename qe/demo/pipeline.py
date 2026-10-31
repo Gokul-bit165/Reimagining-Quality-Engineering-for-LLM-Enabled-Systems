@@ -8,6 +8,7 @@ The generator and the target are simulated (FakeLLM sandbox): nothing here is a 
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -40,6 +41,7 @@ from qe.exec.executor import execute
 from qe.exec.sandbox import LocalSandbox
 from qe.exec.sandbox_envs import ENVS
 from qe.exec.sandbox_runner import AttackOutcome, run_attack
+from qe.llm.real import RealRuntime
 from qe.localize.localizer import FailureContext, localize, to_failure_record
 from qe.model.app_model import AppModel, Node
 from qe.ports import SandboxLimits, TargetRequest, TargetResponse
@@ -93,12 +95,22 @@ class InProcessTarget:
 
     visibility_level = VisibilityLevel.B_SDK
 
-    def __init__(self, build: Callable[..., Any], variant: str) -> None:
-        self._build, self._variant = build, variant
+    def __init__(self, build: Callable[..., Any], variant: str, llm: Any = None) -> None:
+        self._build, self._variant, self._llm = build, variant, llm
 
     async def invoke(self, request: TargetRequest) -> TargetResponse:
-        raw = self._build(self._variant, seed=request.seed).invoke(
-            {k: v for k, v in request.model_dump().items() if v is not None})
+        payload = {k: v for k, v in request.model_dump().items() if v is not None}
+        kwargs: dict[str, Any] = {"seed": request.seed}
+        if self._llm is not None:
+            kwargs["llm"] = self._llm
+        app = self._build(self._variant, **kwargs)
+        if self._llm is None:
+            raw = app.invoke(payload)
+        else:  # real model: blocking network call, may fail or be rate limited
+            try:
+                raw = await asyncio.to_thread(app.invoke, payload)
+            except Exception as exc:  # noqa: BLE001 - recorded as a run error, never swallowed
+                return TargetResponse(output="", error=f"{type(exc).__name__}: {exc}")
         spans = tuple(Span(span_id=f"s{i}", kind=str(ev.get("type", "other")), attributes=ev)
                       for i, ev in enumerate(raw.get("trace") or []))
         return TargetResponse(output=str(raw.get("output", "")),
@@ -189,13 +201,14 @@ def _append(ledger: Ledger, key: str, etype: EventType, payload: dict[str, Any],
 
 
 async def _generate(ledger: Ledger, app: str, taxonomy_id: str, scenario: str,
-                    previous_failures: list[str], budget: int, policy: Policy) -> list[TestCase]:
+                    previous_failures: list[str], budget: int, policy: Policy,
+                    real: RealRuntime | None = None) -> list[TestCase]:
     taxonomy = load_taxonomy(TAXONOMY)
     if taxonomy_id not in taxonomy.ids():
         raise ValueError(f"unknown taxonomy id {taxonomy_id!r}")
     model = _components(app)
     # 1. Risk Analyst (simulated) proposes; user's own scenario is added as a human proposal.
-    analyst: CrewLLM = SimulatedCrewLLM("analyst")
+    analyst: CrewLLM = real.crew("nvidia-nemotron") if real else SimulatedCrewLLM("analyst")
     result = await propose_risks(analyst, model, taxonomy, ledger)
     prior = "".join(f" prior failure: {p}." for p in previous_failures)
     component = sorted(model.node_ids())[0] if app == "toolagent" else "retriever:main"
@@ -213,8 +226,8 @@ async def _generate(ledger: Ledger, app: str, taxonomy_id: str, scenario: str,
              "unplanned": list(pl.unplanned), "budget": budget,
              "invalid_taxonomy": [r.taxonomy_id for r, _ in invalid]})
     # 2. Two simulated authors from different families draft tests from the app's sources.
-    authors = [ScenarioAuthor(SimulatedCrewLLM("author-a", 0)),
-               ScenarioAuthor(SimulatedCrewLLM("author-b", 1))]
+    author_a: CrewLLM = real.crew("nvidia-nemotron") if real else SimulatedCrewLLM("author-a", 0)
+    authors = [ScenarioAuthor(author_a), ScenarioAuthor(SimulatedCrewLLM("author-b", 1))]
     authored = await author_suite(authors, pl, ranked, _sources(app), ledger)
     # 3. Deterministic validation gates (verbatim quote, redundancy) before anything executes.
     redundant = flag_redundant(authored.tests)
@@ -224,7 +237,7 @@ async def _generate(ledger: Ledger, app: str, taxonomy_id: str, scenario: str,
                    "family": next((x[7:] for x in t.lineage if x.startswith("family:")), "")}
             for t in kept}
     _append(ledger, "generated_suite", EventType.EVIDENCE_RECORDED,
-            {"kind": "generated_suite", "simulated_generation": True, "tests": meta,
+            {"kind": "generated_suite", "simulated_generation": real is None, "tests": meta,
              "rejected": [{"reason": r, "item": i} for i, r in authored.rejected],
              "redundant": redundant,
              "unplanned_risks": list(pl.unplanned)})
@@ -366,6 +379,7 @@ def _regression(ledger: Ledger, app: str, cases: dict[str, TestCase],
 async def run_scenario_variant(
     out_dir: Path, run_id: str, app: str, variant: str, taxonomy_id: str, scenario: str,
     previous_failures: list[str] | None = None, budget: int = 12,
+    real: RealRuntime | None = None,
 ) -> str:
     """Run the full pipeline for one variant; writes `<run_id>.sqlite` and `.policy.json`."""
     if app not in APP_METRICS or variant not in ("clean", "seeded"):
@@ -377,27 +391,38 @@ async def run_scenario_variant(
     ledger = SQLiteLedger(path)
     policy = make_policy(app, taxonomy_id)
     prev = previous_failures or []
+    repeats = 2 if real else REPEATS
     _append(ledger, "scenario", EventType.EVIDENCE_RECORDED,
             {"kind": "scenario", "app": app, "variant": variant, "taxonomy_id": taxonomy_id,
              "text": scenario, "previous_failures": prev, "budget": budget,
-             "simulated_generation": True, "simulated_target": "FakeLLM sandbox app",
-             "repeats": REPEATS, "attack_budget": ATTACK_BUDGET})
+             "mode": "real" if real else "simulated",
+             "simulated_generation": real is None,
+             "simulated_target": "FakeLLM sandbox app" if real is None else None,
+             "tester_model": real.settings.agent_model if real else None,
+             "target_model": real.settings.target_model if real else None,
+             "second_author": (
+                 "simulated stand-in (a second model family is required)" if real else None),
+             "repeats": repeats, "attack_budget": ATTACK_BUDGET,
+             "attacks_run_on": "deterministic sandbox (FakeLLM)",
+             "regression": "skipped: needs a measured flake rate" if real else "run"})
     record_access_profile(ledger, AccessProfile(
         target=f"{app}-{variant}", visibility_level=VisibilityLevel.B_SDK,
         capabilities=("in-process sandbox", "trace in response")))
-    tests = await _generate(ledger, app, taxonomy_id, scenario, prev, budget, policy)
+    tests = await _generate(ledger, app, taxonomy_id, scenario, prev, budget, policy, real)
     meta = {t.id: {"question": str(t.input["question"]), "expected": str(t.input["expected"]),
                    "source_id": str(t.input["source_id"])} for t in tests}
     cases = {t.id: _case(app, t, i) for i, t in enumerate(tests)}
     async with LocalSandbox().session(
             SandboxLimits(max_calls=10_000, max_tokens=0)) as session:
-        await execute(ledger, InProcessTarget(_builder(app), variant), list(cases.values()),
-                      repeats=REPEATS, seed=SEED, session=session)
+        target = InProcessTarget(_builder(app), variant,
+                                 real.target_llm() if real else None)
+        await execute(ledger, target, list(cases.values()), repeats=repeats, seed=SEED,
+                      session=session)
     verify_runs(ledger, make_checks(app, meta))
     await _attack(ledger, app, variant)
     runs = _runs_by_case(ledger)
     _localize(ledger, app, variant, runs, meta)
-    if variant == "seeded":
+    if variant == "seeded" and real is None:
         _regression(ledger, app, cases, meta)
     (out_dir / f"{run_id}.policy.json").write_text(policy.model_dump_json(indent=2), "utf-8")
     ledger.close()

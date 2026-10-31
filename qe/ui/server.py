@@ -11,13 +11,14 @@ import asyncio
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from qe.core.dotenv import load_dotenv
 from qe.core.events import Event, EventType, ProducerKind
 from qe.core.ids import content_id
 from qe.core.ledger import SQLiteLedger
@@ -25,6 +26,7 @@ from qe.core.schemas import Policy, Signoff
 from qe.demo.pipeline import APP_METRICS, TAXONOMY, run_scenario_variant
 from qe.demo.run_demo import run_demo
 from qe.demo.scenario_report import build_report
+from qe.llm.real import RealLLMNotAllowedError, RealRuntime, runtime_from_env
 from qe.report.evidence_pack import render_json, render_markdown
 from qe.report.viewer import build_view
 from qe.risk.taxonomy import load_taxonomy
@@ -32,6 +34,7 @@ from qe.risk.taxonomy import load_taxonomy
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+load_dotenv(ROOT / ".env")  # allow-listed names only; values are never printed
 
 
 def runs_dir() -> Path:
@@ -102,6 +105,7 @@ class ScenarioRequest(BaseModel):
     scenario: str = Field(min_length=3, max_length=500)
     budget: int = Field(default=12, ge=1, le=40)
     previous_failures: list[str] = Field(default_factory=list, max_length=10)
+    mode: Literal["simulated", "real"] = "simulated"
 
 
 class SignoffRequest(BaseModel):
@@ -117,6 +121,18 @@ def taxonomy() -> dict[str, Any]:
             "entries": [{"id": e.id, "title": e.title} for e in t.entries]}
 
 
+@app.get("/api/config")
+def config() -> dict[str, Any]:
+    """Whether real-model mode is available. Never returns the key or its value."""
+    try:
+        rt = runtime_from_env(runs_dir())
+    except RealLLMNotAllowedError as exc:
+        return {"real_available": False, "reason": str(exc)}
+    s = rt.settings
+    return {"real_available": True, "tester_model": s.agent_model,
+            "target_model": s.target_model, "max_calls": s.max_calls}
+
+
 @app.post("/api/scenarios")
 def run_scenario(req: ScenarioRequest) -> dict[str, Any]:
     """Generate tests from a risk scenario and run the full pipeline on clean + seeded."""
@@ -124,13 +140,19 @@ def run_scenario(req: ScenarioRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="unknown app")
     if req.taxonomy_id not in load_taxonomy(TAXONOMY).ids():
         raise HTTPException(status_code=400, detail="unknown taxonomy id")
+    real: RealRuntime | None = None
+    if req.mode == "real":
+        try:
+            real = runtime_from_env(runs_dir())
+        except RealLLMNotAllowedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
     sid = content_id([req.app, req.taxonomy_id, req.scenario, sorted(req.previous_failures),
-                      req.budget])[:8]
+                      req.budget, req.mode])[:8]
     ids = [f"scn-{sid}-{req.app}-{v}" for v in ("clean", "seeded")]
     for run_id, variant in zip(ids, ("clean", "seeded"), strict=True):
         asyncio.run(run_scenario_variant(
             runs_dir(), run_id, req.app, variant, req.taxonomy_id, req.scenario,
-            req.previous_failures, req.budget))
+            req.previous_failures, req.budget, real))
     return {"scenario_id": sid, "runs": ids}
 
 

@@ -18,7 +18,8 @@ from __future__ import annotations
 import asyncio
 import socket
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from types import TracebackType
 from typing import Any, Self
 
@@ -28,6 +29,8 @@ class EgressBlockedError(ConnectionError):
 
 
 _LOCK = threading.RLock()
+_REAL_GETADDRINFO = socket.getaddrinfo  # captured before any guard patches it
+_EXEMPT: dict[str, int] = {}  # explicitly approved host names/IPs -> active reference count
 _BYPASS = threading.local()  # socketpair() internals connect over loopback (Windows)
 _ACTIVE: list[EgressGuard] = []
 _ORIGINALS: dict[tuple[Any, str], Any] = {}
@@ -57,6 +60,8 @@ def _check(host: str, port: object = None) -> None:
     if getattr(_BYPASS, "depth", 0) > 0:
         return
     with _LOCK:
+        if _EXEMPT.get(host, 0) > 0:
+            return
         blocked = [g for g in _ACTIVE if host not in g._allow]
         if not blocked:
             return
@@ -189,3 +194,29 @@ class EgressGuard:
             _ACTIVE.remove(self)
             if not _ACTIVE:
                 _uninstall()
+
+
+@contextmanager
+def exempt_hosts(*names: str) -> Iterator[None]:
+    """Temporarily allow egress to the named hosts (and the IPs they resolve to), process-wide.
+
+    Used only for owner-approved real-model calls (e.g. openrouter.ai). Everything else stays
+    blocked. Resolution uses the unpatched resolver captured at import time.
+    """
+    hosts: set[str] = set(names)
+    for name in names:
+        try:
+            hosts.update(str(i[4][0]) for i in _REAL_GETADDRINFO(name, 443))
+        except OSError:
+            pass  # unresolved now; the connect will fail on its own
+    with _LOCK:
+        for h in hosts:
+            _EXEMPT[h] = _EXEMPT.get(h, 0) + 1
+    try:
+        yield
+    finally:
+        with _LOCK:
+            for h in hosts:
+                _EXEMPT[h] -= 1
+                if _EXEMPT[h] <= 0:
+                    del _EXEMPT[h]

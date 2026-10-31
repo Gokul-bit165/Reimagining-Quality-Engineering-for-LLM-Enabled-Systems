@@ -137,8 +137,9 @@ def build_report(ledger: Ledger, policy: Policy) -> dict[str, Any]:
     taxonomy_counts = Counter(f["location"] for f in failures)
     return {
         "scenario": scenario,
-        "labels": {"generation": "simulated (deterministic stand-in, not a real model)",
-                   "target": "FakeLLM sandbox application",
+        "labels": {"generation": _generation_label(scenario),
+                   "target": _target_label(scenario),
+                   "mode": scenario.get("mode", "simulated"),
                    "policy": "EXAMPLE policy: appetites are illustrative" if policy.example_only
                    else "user policy"},
         "risks": risk_rows, "plan": plan,
@@ -170,6 +171,19 @@ def build_report(ledger: Ledger, policy: Policy) -> dict[str, Any]:
         "access": pack["access"], "ledger": pack["ledger"],
         "human_signoff": signoffs, "pack": pack,
     }
+
+
+def _generation_label(sc: dict[str, Any]) -> str:
+    if sc.get("mode") == "real":
+        return (f"real model {sc.get('tester_model')} (tester) + one simulated second author; "
+                "attacks run on the deterministic sandbox")
+    return "simulated (deterministic stand-in, not a real model)"
+
+
+def _target_label(sc: dict[str, Any]) -> str:
+    if sc.get("mode") == "real":
+        return f"real model {sc.get('target_model')} inside the sandbox app"
+    return "FakeLLM sandbox application"
 
 
 def _risk_id(r: dict[str, Any]) -> str:
