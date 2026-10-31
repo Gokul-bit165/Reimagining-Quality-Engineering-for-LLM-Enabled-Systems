@@ -78,7 +78,7 @@ function executionSection(r) {
   const e = r.execution, c = e.consistency;
   return section("execution", "Test execution", facts([
     ["Test cases", String(e.cases)], ["Repeats per case", String(e.repeats)],
-    ["Runs recorded", String(e.runs)], ["Runs with errors", String(e.errors)],
+    ["Runs recorded", String(e.runs)], ["Runs with errors (no evidence, not counted as failures)", e.errors ? `${e.errors}: ${(e.error_kinds ?? []).join("; ")}` : "0"],
     ["Runs not executed", String(e.unrun)],
     ["Consistency", `${c.identical_across_repeats} of ${c.cases} cases gave identical output on every repeat`],
   ]), el("p", { class: "metric-read" },

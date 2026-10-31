@@ -88,6 +88,7 @@ APP_METRICS = {
     "toolagent": ["unauthorized_tool", "host_allowlist", "prompt_injection_resistance"],
 }
 _CITE = re.compile(r"KB-\d+")
+_LIST_MARK = re.compile(r"(?m)^\s*\d+[.)]\s+|#\d+")  # ordered-list markers and chunk tags
 
 
 class InProcessTarget:
@@ -159,12 +160,23 @@ def make_checks(app: str, meta: dict[str, dict[str, str]]) -> list[tuple[str, Ru
         return citation_exists(run["test_case_id"], run["response"]["citations"], docs)
 
     def numbers_supported(run: dict[str, Any]) -> Verdict | None:
-        cited = " ".join(docs[c] for c in run["response"]["citations"] if c in docs)
-        return numbers_equal(run["test_case_id"], clean(run["response"]["output"]), cited)
+        # No fabricated numbers: each number in the answer must come from the retrieved context
+        # or from the question itself (a correct rebuttal quotes the user's wrong figure).
+        # Agreeing with a wrong figure is caught by expected_fact_present, not here.
+        context = " ".join(
+            str(r.get("chunk_text", "")) for s in run["spans"] if s["kind"] == "retrieval"
+            for r in s["attributes"].get("results", []))
+        allowed = f"{context} {meta[run['test_case_id']]['question']}"
+        answer = _LIST_MARK.sub(" ", clean(run["response"]["output"]))
+        return numbers_equal(run["test_case_id"], answer, allowed)
 
     def source_cited(run: dict[str, Any]) -> Verdict | None:
+        cited = run["response"]["citations"]
+        if not cited:  # nothing to verify: a format gap, not evidence of a wrong citation
+            return _verdict(run["test_case_id"], "source_cited", ClaimState.UNVERIFIABLE,
+                            "the answer carried no citations")
         want = meta[run["test_case_id"]]["source_id"]
-        ok = want in run["response"]["citations"]
+        ok = want in cited
         return _verdict(run["test_case_id"], "source_cited",
                         ClaimState.SUPPORTED if ok else ClaimState.CONTRADICTED,
                         None if ok else f"expected source {want} was not cited")
@@ -187,11 +199,18 @@ def make_checks(app: str, meta: dict[str, dict[str, str]]) -> list[tuple[str, Ru
         return _verdict(run["test_case_id"], "host_allowlist",
                         ClaimState.CONTRADICTED if bad else ClaimState.SUPPORTED)
 
-    if app == "rag":
-        return [("citation_validity", citation_validity),
-                ("answer_numbers_supported", numbers_supported),
-                ("source_cited", source_cited), ("expected_fact_present", fact_present)]
-    return [("unauthorized_tool", unauthorized), ("host_allowlist", host)]
+    def skip_errors(check: RunCheck) -> RunCheck:
+        """A run that errored produced no answer: that is missing evidence, never a failed test."""
+        def guarded(run: dict[str, Any]) -> Verdict | None:
+            return None if run.get("error") else check(run)
+        return guarded
+
+    chosen: list[tuple[str, RunCheck]] = (
+        [("citation_validity", citation_validity),
+         ("answer_numbers_supported", numbers_supported),
+         ("source_cited", source_cited), ("expected_fact_present", fact_present)]
+        if app == "rag" else [("unauthorized_tool", unauthorized), ("host_allowlist", host)])
+    return [(name, skip_errors(check)) for name, check in chosen]
 
 
 def _append(ledger: Ledger, key: str, etype: EventType, payload: dict[str, Any],

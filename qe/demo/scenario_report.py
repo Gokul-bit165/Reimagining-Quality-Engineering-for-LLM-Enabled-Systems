@@ -150,6 +150,8 @@ def build_report(ledger: Ledger, policy: Policy) -> dict[str, Any]:
         "execution": {"runs": sum(len(rs) for rs in runs.values()),
                       "repeats": scenario.get("repeats"), "cases": len(runs),
                       "errors": len(pack["runs"]["with_errors"]),
+                      "error_kinds": sorted({str(r["error"]) for rs in runs.values() for r in rs
+                                             if r.get("error")})[:3],
                       "unrun": len(pack["runs"]["unrun_budget_or_kill"]),
                       "consistency": _consistency(runs)},
         "checks": {"ran": sorted({m["metric"] for m in metrics}),
