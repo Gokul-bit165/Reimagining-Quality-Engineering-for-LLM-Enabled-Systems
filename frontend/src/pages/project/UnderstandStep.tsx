@@ -3,6 +3,7 @@ import type { DetectedItem, Project } from '../../types/api';
 import { EXECUTION_MODE_INFO, labelOf } from '../../lib/explain';
 import { projectHref } from '../../lib/route';
 import { Banner, Loading, Tip } from '../../components/flow/ui';
+import { ExecutionPanel } from './ExecutionPanel';
 
 const Chips: React.FC<{ items: DetectedItem[] }> = ({ items }) =>
   items.length === 0 ? <span className="muted">Not detected</span> : (
@@ -94,6 +95,8 @@ export const UnderstandStep: React.FC<{ project: Project }> = ({ project }) => {
           </section>
         </div>
       </div>
+
+      <ExecutionPanel project={project} />
 
       <div className="frow">
         <a className="fbtn" href={projectHref(project.id, 'inputs')} data-testid="to-inputs">

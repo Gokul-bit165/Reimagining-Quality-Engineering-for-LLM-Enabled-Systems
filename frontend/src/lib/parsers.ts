@@ -38,6 +38,30 @@ export function parseCsv(text: string): string[][] {
 
 const QUESTION_KEYS = ['question', 'query', 'prompt', 'q'];
 const ANSWER_KEYS = ['reference_answer', 'reference', 'expected', 'answer', 'ground_truth', 'a'];
+const ANSWERABLE_KEYS = ['answerable'];
+const YES = new Set(['true', 'yes', 'y', '1', 'answerable']);
+const NO = new Set(['false', 'no', 'n', '0', 'not answerable', 'unanswerable']);
+
+/** true / false / null (unknown). Anything unrecognised reads as unknown, never as a guess. */
+export function parseAnswerable(v: unknown): boolean | null {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v === 1 ? true : v === 0 ? false : null;
+  const t = String(v ?? '').trim().toLowerCase();
+  if (YES.has(t)) return true;
+  if (NO.has(t)) return false;
+  return null;
+}
+
+/** Build a pair. A "not answerable" item cannot carry a reference answer (backend rule): it is dropped with a note. */
+function makePair(question: string, ref: string, answerableRaw: unknown, where: string, errors: string[]): ProjectQaPair {
+  const answerable = parseAnswerable(answerableRaw);
+  const pair: ProjectQaPair = { question };
+  if (answerable === false && ref) {
+    errors.push(`${where}: marked not answerable but has a reference answer. The reference answer was dropped.`);
+  } else if (ref) pair.reference_answer = ref;
+  if (answerable !== null) pair.answerable = answerable;
+  return pair;
+}
 
 function pickKey(keys: string[], candidates: string[]): number {
   return keys.findIndex((k) => candidates.includes(k.trim().toLowerCase()));
@@ -51,6 +75,7 @@ export function parseQaCsv(text: string): ParseResult<ProjectQaPair> {
   const hasHeader = qi >= 0;
   const questionCol = hasHeader ? qi : 0;
   const answerCol = hasHeader ? pickKey(header, ANSWER_KEYS) : header.length > 1 ? 1 : -1;
+  const answerableCol = hasHeader ? pickKey(header, ANSWERABLE_KEYS) : -1;
   const body = hasHeader ? table.slice(1) : table;
   const rows: ProjectQaPair[] = [];
   const errors: string[] = [];
@@ -58,7 +83,7 @@ export function parseQaCsv(text: string): ParseResult<ProjectQaPair> {
     const question = (cells[questionCol] ?? '').trim();
     if (!question) { errors.push(`Row ${idx + (hasHeader ? 2 : 1)}: missing question, skipped.`); return; }
     const ref = answerCol >= 0 ? (cells[answerCol] ?? '').trim() : '';
-    rows.push(ref ? { question, reference_answer: ref } : { question });
+    rows.push(makePair(question, ref, answerableCol >= 0 ? cells[answerableCol] : null, `Row ${idx + (hasHeader ? 2 : 1)}`, errors));
   });
   return { rows, errors };
 }
@@ -72,10 +97,11 @@ export function parseQaJsonl(text: string): ParseResult<ProjectQaPair> {
       const obj = JSON.parse(line) as Record<string, unknown>;
       const qKey = Object.keys(obj).find((k) => QUESTION_KEYS.includes(k.toLowerCase()));
       const aKey = Object.keys(obj).find((k) => ANSWER_KEYS.includes(k.toLowerCase()));
+      const bKey = Object.keys(obj).find((k) => ANSWERABLE_KEYS.includes(k.toLowerCase()));
       const question = qKey ? String(obj[qKey] ?? '').trim() : '';
       if (!question) { errors.push(`Line ${idx + 1}: no "question" field, skipped.`); return; }
       const ref = aKey ? String(obj[aKey] ?? '').trim() : '';
-      rows.push(ref ? { question, reference_answer: ref } : { question });
+      rows.push(makePair(question, ref, bKey ? obj[bKey] : null, `Line ${idx + 1}`, errors));
     } catch {
       errors.push(`Line ${idx + 1}: not valid JSON, skipped.`);
     }

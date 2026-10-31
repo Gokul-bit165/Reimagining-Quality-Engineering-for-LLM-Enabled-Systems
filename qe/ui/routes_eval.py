@@ -12,11 +12,20 @@ from pydantic import BaseModel, Field, ValidationError
 from qe.core.schemas import Policy
 from qe.policy.engine import decide
 from qe.realeval import audit, jobs, regression
+from qe.realeval.assemble import EXAMPLE_APPETITE, SECURITY_METRIC
 from qe.realeval.dataset import EvalItem
 from qe.realeval.exports import dataset_jsonl, monitoring_plan, report_markdown
 from qe.realeval.generators import generator_from_env
+from qe.realeval.judge import judge_from_env
 from qe.realeval.resolver import ResolveError, resolve_target
-from qe.realeval.runner import Budget, EvalParams, Inputs
+from qe.realeval.runner import (
+    DEFAULT_MAX_QUESTIONS,
+    DEFAULT_REPEATS,
+    Budget,
+    EvalParams,
+    Inputs,
+)
+from sandbox_apps._common.real_llm import missing_llm_config
 
 router = APIRouter()
 MAX_CALLS_CAP = 2000
@@ -26,15 +35,15 @@ ID_RE = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 
 class EvalRequest(BaseModel):
     project_id: str = Field(pattern=ID_RE)
-    max_questions: int = Field(default=20, ge=1, le=200)
-    repeats: int = Field(default=1, ge=1, le=10)
+    max_questions: int = Field(default=DEFAULT_MAX_QUESTIONS, ge=1, le=200)
+    repeats: int = Field(default=DEFAULT_REPEATS, ge=1, le=10)
     include_security: bool = True
     generate_questions: bool = True
     policy: dict[str, Any] | None = None
+    use_example_policy: bool = False  # explicit opt-in to the NON-binding example policy
     # additions beyond the original contract
     risk_focus: list[str] = Field(default_factory=list, max_length=20)
     seed: int = Field(default=0, ge=0, le=2**31)
-    allow_synthetic: bool = False
     max_calls: int = Field(default=500, ge=1, le=MAX_CALLS_CAP)
     timeout_s: float = Field(default=DEFAULT_TIMEOUT_S, gt=0, le=3600)
     monitoring: dict[str, Any] | None = None
@@ -65,6 +74,22 @@ def _policy(raw: dict[str, Any] | None) -> Policy | None:
     return pol
 
 
+def _require_policy_choice(req: EvalRequest, policy: Policy | None) -> None:
+    """A release decision needs a risk appetite the USER chose. No silent default."""
+    if policy is None and not req.use_example_policy:
+        raise HTTPException(
+            status_code=422,
+            detail="no policy chosen: supply `policy` (see GET /api/policy/template) or pass "
+                   "`use_example_policy: true` to explicitly use the non-binding example policy")
+    if (policy is not None and req.include_security
+            and SECURITY_METRIC not in policy.required_evidence):
+        raise HTTPException(
+            status_code=422,
+            detail=f"invalid policy: security probes are on, so {SECURITY_METRIC} must be in "
+                   "required_evidence (with a risk_appetite), or set include_security=false "
+                   "(the decision then cannot be RELEASE: 'security not tested')")
+
+
 def _get(eid: str) -> dict[str, Any]:
     rec = jobs.load(eid)
     if rec is None:
@@ -87,15 +112,19 @@ def create_evaluation(req: EvalRequest) -> dict[str, Any]:
             detail="project is not marked authorized: confirm you own or are permitted to test "
                    "this application before evaluating it")
     policy = _policy(req.policy)
-    generator = generator_from_env(req.allow_synthetic) if req.generate_questions else None
+    _require_policy_choice(req, policy)
+    generator = generator_from_env() if req.generate_questions else None
     if not project.qa_pairs and generator is None:
         raise HTTPException(
             status_code=422,
-            detail="no Q&A pairs supplied and no question generator available: provide "
-                   "questions, configure a real LLM key, or set allow_synthetic=true "
-                   "(results will be labelled SYNTHETIC)")
+            detail="no Q&A pairs supplied and no real LLM question generator is configured: "
+                   "supply Q&A pairs, or set QE_ALLOW_REAL_LLM=1, a provider key "
+                   "(GROQ_API_KEY or OPENROUTER_API_KEY) and QE_LLM_MODEL in the backend "
+                   "environment")
     prior_failures, prior_pass = jobs.prior_context(req.project_id)
-    inputs = Inputs(project=project, generator=generator, prior_failures=prior_failures,
+    inputs = Inputs(project=project, generator=generator,
+                    judge=judge_from_env(generator.family if generator else None),
+                    prior_failures=prior_failures,
                     prior_pass=prior_pass,
                     regression_items=regression.suite_items(jobs.runs_dir(), req.project_id))
     params = EvalParams(max_questions=req.max_questions, repeats=req.repeats,
@@ -105,7 +134,7 @@ def create_evaluation(req: EvalRequest) -> dict[str, Any]:
     out = jobs.start(req.project_id, params, inputs, Budget(req.max_calls, req.timeout_s),
                      req.monitoring)
     audit.log(ed, "evaluation_started", evaluation_id=out["id"], project_id=req.project_id,
-              max_calls=req.max_calls, synthetic_allowed=req.allow_synthetic)
+              max_calls=req.max_calls)
     return out
 
 
@@ -154,7 +183,7 @@ def confirm_item(eval_id: str, item_id: str, req: ConfirmRequest) -> dict[str, A
 def admit_regression(eval_id: str, req: RegressionRequest | None = None) -> dict[str, Any]:
     rec = _get(eval_id)
     wanted = set(req.item_ids) if req and req.item_ids else None
-    failed = [r for r in rec["items"] if not r["passed"]
+    failed = [r for r in rec["items"] if r["passed"] is False
               and (wanted is None or r["id"] in wanted)]
     items = {r["id"]: EvalItem.model_validate({
         "id": r["id"], "question": r["question"], "reference_answer": r["reference_answer"],
@@ -197,3 +226,55 @@ def get_report(eval_id: str, format: Literal["md", "json"] = "md") -> PlainTextR
         return PlainTextResponse(json.dumps(jobs.public(rec), indent=2),
                                  media_type="application/json")
     return PlainTextResponse(report_markdown(rec), media_type="text/markdown")
+
+
+METRIC_DOCS = (
+    ("answer_correctness", "Share of root questions whose answer matches the reference "
+                           "(deterministic lexical check)."),
+    ("faithfulness", "Share of root questions whose answer is supported by the passage text the "
+                     "app returned. Not measured when the app returns ids/filenames."),
+    ("citation_validity", "Share of answers whose citations resolve."),
+    ("retrieval_hit_rate", "Share of questions where retrieval surfaced the evidence."),
+    ("refusal_correctness", "Share of unanswerable questions correctly refused."),
+    ("completeness", "Share of answerable questions answered without refusal or error."),
+    ("injection_resistance", "Share of attack probes resisted (outcome oracles). Required "
+                             "whenever security probes run."),
+    ("error_rate", "Share of root questions whose target call errored (here the metric IS a "
+                   "failure rate)."),
+    ("stability_pass_k", "Share of root questions passing on every repeat."),
+    ("overall_pass_rate", "Share of root questions passing every applicable check."),
+)
+
+
+@router.get("/api/policy/template")
+def policy_template() -> dict[str, Any]:
+    """A documented policy skeleton. Every number is null on purpose: the risk appetite is the
+    user's decision, so the UI must make them choose; nothing here is a recommended default."""
+    return {
+        "policy": {
+            "policy_id": None, "version": None, "loss_matrix": {},
+            "required_evidence": [],
+            "risk_appetite": {name: None for name, _ in METRIC_DOCS},
+            "conditional_rules": [], "min_improvement": {}},
+        "fields": {
+            "policy_id": "your name for this policy (string)",
+            "version": "your version label (string)",
+            "required_evidence": "metric names that must be measured and within appetite to "
+                                 f"RELEASE; must include {SECURITY_METRIC} when security runs",
+            "risk_appetite": "metric -> the MAXIMUM failure rate (0..1) you tolerate; every "
+                             "required metric needs one; the 95% interval must lie within it",
+            "conditional_rules": "optional [{metric, max_failure_rate, condition}] for CONDITIONAL",
+            "loss_matrix": "optional; leave {} unless you use expected-loss decisions"},
+        "metrics": [{"name": n, "description": d} for n, d in METRIC_DOCS],
+        "notes": ["Fill risk_appetite for every metric you list in required_evidence.",
+                  "null means 'you have not chosen'; POST /api/evaluations rejects it (422).",
+                  "An example policy exists for demos only: pass use_example_policy=true "
+                  f"(appetites {dict(EXAMPLE_APPETITE)}); decisions then say policy_is_example."],
+    }
+
+
+@router.get("/api/llm/status")
+def llm_status() -> dict[str, Any]:
+    """Whether a real LLM is configured, as setting NAMES only (never values)."""
+    missing = missing_llm_config()
+    return {"configured": not missing, "missing": missing}

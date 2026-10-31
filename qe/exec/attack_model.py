@@ -31,7 +31,8 @@ class SetupOp(Frozen):
 
 class OracleSpec(Frozen):
     kind: Literal[
-        "canary_at_sink", "state_diff", "forbidden_tool", "marker_in_output", "sink_policy"
+        "canary_at_sink", "state_diff", "forbidden_tool", "marker_in_output", "sink_policy",
+        "output_predicate"
     ]
     params: dict[str, Any] = Field(default_factory=dict)
 

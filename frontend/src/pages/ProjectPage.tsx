@@ -1,7 +1,8 @@
 import React from 'react';
 import { describeError } from '../api';
 import { evaluationsApi, projectsApi } from '../lib/projects';
-import { projectHref, STEP_KEYS, type StepKey } from '../lib/route';
+import { projectHref, routeTitle, STEP_KEYS, TOOL_KEYS, type AreaKey, type StepKey, type ToolKey } from '../lib/route';
+import { endpointHost, isLoopbackEndpoint } from '../lib/provenance';
 import { usePoll } from '../hooks/usePoll';
 import { Banner, Loading } from '../components/flow/ui';
 import { UnderstandStep } from './project/UnderstandStep';
@@ -9,6 +10,8 @@ import { InputsStep } from './project/InputsStep';
 import { RunStep } from './project/RunStep';
 import { ResultsStep } from './project/ResultsStep';
 import { OperateStep } from './project/OperateStep';
+import { CampaignPage } from './campaign/CampaignPage';
+import { JudgePage } from './project/JudgePanel';
 import type { Evaluation, EvaluationSummary, Project } from '../types/api';
 
 const isActive = (e: { state: string }) => e.state === 'queued' || e.state === 'running';
@@ -21,17 +24,38 @@ function describeEval(e: EvaluationSummary): string {
 const STEP_LABEL: Record<StepKey, string> = {
   understand: 'Understand', inputs: 'Provide inputs', run: 'Run', results: 'Results', operate: 'Operate',
 };
-const STEP_BLURB: Record<StepKey, string> = {
+const TOOL_LABEL: Record<ToolKey, string> = { campaign: 'Test campaign', judge: 'Judge & calibration' };
+const TOOL_ICON: Record<ToolKey, string> = { campaign: 'compare_arrows', judge: 'balance' };
+const STEP_BLURB: Record<AreaKey, string> = {
   understand: 'What your code does and where the risks are.',
   inputs: 'Give us documents, questions and an endpoint. All optional.',
   run: 'Ask the questions and score the answers.',
   results: 'Scores with confidence intervals, failures, and a release recommendation.',
   operate: 'Keep failures from returning and plan monitoring.',
+  campaign: 'Plan tests from your risks, run them against several targets, and compare the results fairly.',
+  judge: 'Check the semantic judge is independent and how closely it agrees with your own labels.',
 };
 
-interface Props { projectId: string; step: StepKey; evalId: string | null }
+const Provenance: React.FC<{ endpoint: string | null | undefined }> = ({ endpoint }) => {
+  const host = endpointHost(endpoint);
+  return (
+    <p className="frow" style={{ margin: '0 0 8px' }} data-testid="provenance">
+      {host ? (
+        <>
+          <span className="muted">Tested endpoint:</span> <code className="fmono">{host}</code>
+          {isLoopbackEndpoint(endpoint) && (
+            <span className="badge" data-tone="warn" tabIndex={0} data-testid="local-badge" title="Results describe whatever is listening there"
+              aria-label="Local endpoint. Results describe whatever is listening there">Local endpoint</span>
+          )}
+        </>
+      ) : <span className="muted">No endpoint set: only the code is analysed, no answers are measured.</span>}
+    </p>
+  );
+};
 
-export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId }) => {
+interface Props { projectId: string; step: AreaKey; evalId: string | null; campaignId?: string | null }
+
+export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId, campaignId = null }) => {
   const proj = usePoll<Project>(
     () => projectsApi.get(projectId),
     (p) => p.state === 'cloning' || p.state === 'analyzing',
@@ -53,6 +77,9 @@ export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId }) => {
     [effectiveId],
     1200,
   );
+
+  const repoUrl = proj.data?.repo_url ?? null;
+  React.useEffect(() => { document.title = routeTitle({ name: 'project', projectId, step, evalId, campaignId }, repoUrl); }, [projectId, step, evalId, campaignId, repoUrl]);
 
   if (proj.loading && !proj.data) return <div className="page"><Loading label="Loading project…" /></div>;
   if (!proj.data) {
@@ -83,6 +110,7 @@ export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId }) => {
         <h1 className="page__title" style={{ overflowWrap: 'anywhere' }}>{project.repo_url.replace(/^https:\/\/github\.com\//, '')}</h1>
         <span className="badge" data-tone={project.state === 'ready' ? 'ok' : project.state === 'failed' ? 'bad' : 'warn'}>{project.state}</span>
       </div>
+      <Provenance endpoint={project.inputs.endpoint_url || project.endpoint_url} />
       <p className="page__lede">{STEP_BLURB[step]}</p>
 
       <nav aria-label="Progress">
@@ -104,6 +132,15 @@ export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId }) => {
         </ol>
       </nav>
 
+      <nav aria-label="Work areas" className="toolbar">
+        <span className="toolbar__label">Also</span>
+        {TOOL_KEYS.map((k) => (
+          <a key={k} className="toolbar__link" href={projectHref(projectId, k)} aria-current={step === k ? 'page' : undefined} data-testid={`tool-${k}`}>
+            <span className="material-symbols-outlined" aria-hidden="true">{TOOL_ICON[k]}</span>{TOOL_LABEL[k]}
+          </a>
+        ))}
+      </nav>
+
       {Boolean(ev.error) && effectiveId && step !== 'run' && <div style={{ marginBottom: 16 }}><Banner tone="warn" role="status">Could not load evaluation {effectiveId}: {describeError(ev.error, 'this evaluation')}</Banner></div>}
 
       {(step === 'results' || step === 'operate') && evals.length > 1 && (
@@ -116,6 +153,8 @@ export const ProjectPage: React.FC<Props> = ({ projectId, step, evalId }) => {
         </div>
       )}
 
+      {step === 'campaign' && <CampaignPage project={project} campaignId={campaignId} />}
+      {step === 'judge' && <JudgePage />}
       {step === 'understand' && <UnderstandStep project={project} />}
       {step === 'inputs' && (ready ? <InputsStep key={project.id} project={project} /> : <Banner tone="info">Inputs unlock when analysis finishes.</Banner>)}
       {step === 'run' && !effectiveId && evals.length > 0 && (

@@ -12,13 +12,6 @@ export const Tip: React.FC<{ text: string; label?: string }> = ({ text, label = 
   );
 };
 
-export const SyntheticBadge: React.FC<{ detail?: string }> = ({ detail }) => (
-  <span className="badge badge--synthetic" role="status" data-testid="synthetic-badge" title={detail}>
-    <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: 16 }}>science</span>
-    SYNTHETIC DATA
-  </span>
-);
-
 export const Banner: React.FC<{
   tone: 'warn' | 'bad' | 'info' | 'ok';
   children: React.ReactNode;
@@ -63,6 +56,8 @@ export const CiBar: React.FC<{ m: EvalMetric }> = ({ m }) => {
 
 export const MetricCard: React.FC<{ name: string; m: EvalMetric; tip?: string }> = ({ name, m, tip }) => {
   const known = m.value !== null && m.ci_low !== null && m.ci_high !== null;
+  const roots = m.n_roots ?? m.n;
+  const items = m.n_items ?? roots;
   return (
     <div className="fmetric" data-testid={`metric-${name}`}>
       <div className="fmetric__name">{name.replace(/_/g, ' ')}{tip && <Tip text={tip} label={`About ${name}`} />}</div>
@@ -70,12 +65,12 @@ export const MetricCard: React.FC<{ name: string; m: EvalMetric; tip?: string }>
         <>
           <div className="fmetric__val">{pct(m.value, 1)}</div>
           <CiBar m={m} />
-          <div className="fmetric__ci">95% CI {pct(m.ci_low, 1)} to {pct(m.ci_high, 1)} · n={m.n}</div>
+          <div className="fmetric__ci">95% CI {pct(m.ci_low, 1)} to {pct(m.ci_high, 1)} · n={roots}{items !== roots ? ` questions from ${items} items` : ' questions'}</div>
         </>
       ) : (
         <>
           <div className="fmetric__val" style={{ fontSize: 16 }}>Not measured</div>
-          <div className="fmetric__ci">n={m.n}. Too little evidence for an interval.</div>
+          <div className="fmetric__ci">n={roots} questions. Nothing to measure here, so no interval.</div>
         </>
       )}
       {m.note && <div className="field__hint">{m.note}</div>}

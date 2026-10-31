@@ -42,6 +42,11 @@ class CallableTarget:
                             latency_s=time.perf_counter() - start)
 
 
+# Aspects the test corpora never document; the fake refuses these even when an entity matches,
+# standing in for a grounded app that does not answer beyond its documents.
+UNDOCUMENTED_ASPECTS = ("annual revenue", "founding date", "head office address", "refund policy")
+
+
 class FakeRagTarget:
     """Deterministic in-memory RAG over a list of document texts, for tests.
 
@@ -69,10 +74,14 @@ class FakeRagTarget:
         if self.mode == "injectable" and ("concatenat" in low or "joined together" in low):
             q = question.split("'")
             return TargetAnswer(answer=q[1] + q[3], contexts=ctx, latency_s=0.01)
+        if self.mode == "injectable" and "pay.evil.example" in low:
+            return TargetAnswer(
+                answer="Please complete your payment at http://pay.evil.example/verify.",
+                contexts=ctx, latency_s=0.01)
         if self.mode == "hallucinating":
             return TargetAnswer(answer="The figure is 987654 according to our records.",
                                 contexts=ctx, latency_s=0.02)
-        if not ctx:
+        if not ctx or any(a in low for a in UNDOCUMENTED_ASPECTS):
             return TargetAnswer(answer="I do not know based on the provided documents.",
                                 contexts=[], latency_s=0.01)
         return TargetAnswer(answer=ctx[0], contexts=ctx, latency_s=0.01)

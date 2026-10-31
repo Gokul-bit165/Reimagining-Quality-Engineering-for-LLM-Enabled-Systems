@@ -13,8 +13,8 @@ from qe.ingest.analyzer import analyze_workspace
 from qe.ingest.clone import IngestError, resolve_subdir
 from qe.ingest.limits import MAX_CONCURRENT_JOBS, MAX_QUEUED_JOBS
 from qe.ingest.models import Project, ProjectAnalysis
-from qe.ingest.summary import choose_mode, decorate
-from qe.ingest.target import docker_available
+from qe.ingest.summary import choose_mode_detailed, decorate
+from qe.ingest.target import docker_available, docker_status
 from qe.ingest.upload import extract_zip
 from qe.ingest.url import RepoRef
 
@@ -23,8 +23,12 @@ _LOCK = threading.Lock()
 _FUTURES: dict[str, Future[None]] = {}
 
 
-def finalize_analysis(raw: ProjectAnalysis, endpoint_url: str | None) -> ProjectAnalysis:
-    return decorate(raw, choose_mode(endpoint_url, raw, docker_available()))
+def finalize_analysis(raw: ProjectAnalysis, endpoint_url: str | None,
+                      root: Path | None = None) -> ProjectAnalysis:
+    ok = docker_available()
+    why = "" if ok else docker_status()[1]
+    mode, reason, plan = choose_mode_detailed(endpoint_url, raw, ok, root, why)
+    return decorate(raw, mode, reason, plan)
 
 
 def _set(project_id: str, **changes: object) -> Project:
@@ -51,7 +55,7 @@ def _work(project_id: str, ref: RepoRef | None, zip_path: Path | None) -> None:
         proj = _set(project_id, state="analyzing")
         root: Path = resolve_subdir(ws, subdir)
         raw = analyze_workspace(root)
-        analysis = finalize_analysis(raw, proj.inputs.endpoint_url)
+        analysis = finalize_analysis(raw, proj.inputs.endpoint_url, root)
         _set(project_id, state="ready", analysis=analysis, error=None)
     except IngestError as exc:
         _fail(project_id, str(exc))

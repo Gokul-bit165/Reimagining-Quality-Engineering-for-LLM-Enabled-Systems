@@ -3,29 +3,20 @@
 import asyncio
 import json
 import socket
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from qe.core.dotenv import load_dotenv
-from qe.core.ledger import SQLiteLedger
-from qe.core.schemas import Policy
-from qe.demo.pipeline import run_scenario_variant
-from qe.demo.scenario_report import build_report
-from qe.demo.sim_llm import SimulatedCrewLLM
 from qe.exec.egress import EgressBlockedError, EgressGuard, exempt_hosts
 from qe.llm.real import (
     CallBudget,
     RealCrewLLM,
     RealLLMNotAllowedError,
-    RealRuntime,
-    RealSettings,
     clean_json_text,
     real_settings_from_env,
 )
-from sandbox_apps._common.llm import FakeLLM
 
 FREE = {"QE_ALLOW_REAL_LLM": "1", "OPENROUTER_API_KEY": "k", "QE_AGENT_MODEL": "a:free",
         "QE_TARGET_MODEL": "t:free"}
@@ -101,38 +92,3 @@ def test_exempt_host_opens_only_that_host_and_only_while_active() -> None:
                 socket.create_connection(("127.0.0.1", port), timeout=1)
     finally:
         srv.close()
-
-
-@dataclass(frozen=True)
-class StubRuntime(RealRuntime):
-    """A RealRuntime whose 'models' are local stubs: crew replies come from the simulator."""
-
-    def client(self, model: str, timeout: float = 90.0) -> Any:
-        return StubModel() if model == self.settings.agent_model else FakeLLM(seed=0)
-
-
-class StubModel:
-    def complete(self, messages: list[dict[str, str]], **kw: Any) -> str:
-        system, user = messages[0]["content"], messages[1]["content"]
-        sim = SimulatedCrewLLM("stub")
-        return asyncio.run(sim.complete(system, user))
-
-
-def test_real_mode_pipeline_wiring_labels_budget_and_honest_skips(tmp_path: Path) -> None:
-    rt = StubRuntime(RealSettings("agent:free", "target:free", 500), CallBudget(500),
-                     tmp_path / "cache.jsonl")
-    asyncio.run(run_scenario_variant(
-        tmp_path, "real-rag-seeded", "rag", "seeded", "LLM09",
-        "Customers get invented policy facts", None, 6, rt))
-    ledger = SQLiteLedger(tmp_path / "real-rag-seeded.sqlite")
-    policy = Policy.model_validate_json((tmp_path / "real-rag-seeded.policy.json").read_text("utf-8"))
-    rep = build_report(ledger, policy)
-    assert rep["labels"]["mode"] == "real" and "agent:free" in rep["labels"]["generation"]
-    assert "target:free" in rep["labels"]["target"]
-    assert rep["scenario"]["repeats"] == 2 and rt.budget.used > 0
-    assert rep["regression"]["admitted"] == []
-    assert "skipped" in rep["scenario"]["regression"]
-    providers = {e.event.payload["model"]["provider"] for e in ledger.entries()
-                 if "model" in e.event.payload}
-    assert providers == {"openrouter", "simulated"}  # one real author + one simulated author
-    assert rep["generation"]["tests"] and ledger.verify().ok

@@ -88,10 +88,18 @@ def _from_store(project_id: str) -> ResolvedProject:
     if mode == "static_only":
         raise ResolveError(409, "project is static_only: it cannot be executed, so it cannot be "
                                 "evaluated dynamically")
-    if mode != "endpoint" or not proj.inputs.endpoint_url:
-        raise ResolveError(409, f"execution_mode {mode!r} has no target factory wired into the "
-                                "evaluation engine yet (endpoint mode with endpoint_url works)")
-    target = SandboxedRepoTarget("endpoint", endpoint_url=proj.inputs.endpoint_url)
+    from qe.ingest.vault import VAULT
+
+    target: RagTarget
+    if mode == "docker" and not proj.inputs.endpoint_url:
+        target = _docker_target(project_id, proj)
+    elif mode == "endpoint" and proj.inputs.endpoint_url:
+        target = SandboxedRepoTarget("endpoint", endpoint_url=proj.inputs.endpoint_url,
+                                     secrets=VAULT.get(project_id),
+                                     target_config=proj.target_config)
+    else:
+        raise ResolveError(409, f"execution_mode {mode!r} has no runnable target (endpoint mode "
+                                "needs an endpoint_url)")
     return ResolvedProject(
         project_id=project_id, name=project_id, target=target,
         documents=[d.model_dump() for d in proj.inputs.documents],
@@ -99,3 +107,50 @@ def _from_store(project_id: str) -> ResolvedProject:
         risk_flags=[*proj.inputs.risk_focus,
                     *(f.id for f in (proj.analysis.risk_flags if proj.analysis else []))],
         authorized=proj.authorized)
+
+
+def _docker_target(project_id: str, proj: Any) -> RagTarget:
+    """Managed docker target: nothing is built here; the evaluation job calls prepare()/close()."""
+    from qe.ingest import paths, store
+    from qe.ingest.clone import IngestError, resolve_subdir
+    from qe.ingest.docker_runner import ManagedDockerTarget
+    from qe.ingest.models import RuntimeStatus
+    from qe.ingest.runplan import NotRunnableError, detect_run_plan
+    from qe.ingest.target import docker_status
+    from qe.ingest.vault import VAULT
+
+    ok, why = docker_status()
+    if not ok:
+        raise ResolveError(409, f"docker mode unavailable: {why}")
+    try:
+        root = resolve_subdir(paths.workspace_dir(project_id), proj.subdir)
+        detect_run_plan(root, proj.inputs.app_port, proj.inputs.app_path)
+    except (IngestError, NotRunnableError) as exc:
+        raise ResolveError(409, f"docker mode unavailable: {exc}") from None
+
+    def on_status(st: RuntimeStatus) -> None:
+        cur = store.get(project_id)  # project may have been deleted mid-run
+        if cur is not None:
+            store.save(cur.model_copy(update={"runtime": st}))
+
+    return ManagedDockerTarget(
+        project_id, root, secrets=VAULT.get(project_id), egress_allow=proj.inputs.egress_allowlist,
+        target_config=proj.target_config, app_port=proj.inputs.app_port,
+        app_path=proj.inputs.app_path, on_status=on_status)
+
+
+def prepare_target(target: RagTarget) -> None:
+    """Build/start the target if it needs it. Raises on failure with the user-facing reason."""
+    fn = getattr(target, "prepare", None)
+    if callable(fn):
+        fn()
+
+
+def close_target(target: RagTarget) -> None:
+    """Always release whatever the target holds (containers, networks, images). Never raises."""
+    fn = getattr(target, "close", None)
+    if callable(fn):
+        try:
+            fn()
+        except Exception:  # noqa: BLE001, S110 - cleanup must not mask the job outcome
+            pass

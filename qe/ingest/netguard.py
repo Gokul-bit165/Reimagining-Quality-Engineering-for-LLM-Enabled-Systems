@@ -71,8 +71,8 @@ def _platform_ports() -> frozenset[int]:
     return DEFAULT_PLATFORM_PORTS
 
 
-def _check_local(port: int, path: str) -> None:
-    if os.environ.get("QE_ALLOW_LOCAL_ENDPOINTS") == "1":
+def _check_local(port: int, path: str, trusted_local: bool = False) -> None:
+    if trusted_local or os.environ.get("QE_ALLOW_LOCAL_ENDPOINTS") == "1":
         return
     if port in _platform_ports() or path.startswith("/api/") or path == "/api":
         raise EndpointError("localhost endpoints may not target the platform itself; set "
@@ -92,8 +92,13 @@ def _check_public(ip: IP, allow_private: bool) -> None:
     raise EndpointError("endpoint resolves to a non-public address")
 
 
-def resolve_endpoint(url: str, resolve: bool = True) -> ResolvedEndpoint:
-    """Validate `url` and pin it to one validated IP (resolved exactly once)."""
+def resolve_endpoint(url: str, resolve: bool = True,
+                     trusted_local: bool = False) -> ResolvedEndpoint:
+    """Validate `url` and pin it to one validated IP (resolved exactly once).
+
+    `trusted_local` is set only for a loopback port the platform itself published for a
+    container it started (ADR-0007): it skips the "do not target the platform" check, nothing
+    else (loopback is still required, metadata/link-local still blocked)."""
     if not isinstance(url, str) or not url or len(url) > MAX_ENDPOINT_LEN:
         raise EndpointError("endpoint_url must be a non-empty string")
     if not url.isprintable() or " " in url or "\\" in url:
@@ -117,7 +122,7 @@ def resolve_endpoint(url: str, resolve: bool = True) -> ResolvedEndpoint:
         raise EndpointError("plain http is only allowed for localhost; use https")
     path = parts.path or "/"
     if local:
-        _check_local(port, path)
+        _check_local(port, path, trusted_local)
     chosen = ""
     if resolve or local:
         allow_private = os.environ.get("QE_ALLOW_PRIVATE_ENDPOINTS") == "1"

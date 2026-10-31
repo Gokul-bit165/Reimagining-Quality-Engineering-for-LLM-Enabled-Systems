@@ -1,7 +1,7 @@
 import { api, apiText, jsonInit } from '../api';
 import type {
-  CreateProjectBody, Evaluation, EvaluationOptions, EvaluationSummary, TaxonomyClass, MonitoringPlan, Project, ProjectAnalysis, ProjectInputs,
-  SignoffBody, SuggestedInputs,
+  CreateProjectBody, Evaluation, EvaluationOptions, EvaluationSummary, LlmStatus, PolicyTemplate, TargetConfig, TargetTestResult,
+  TaxonomyClass, MonitoringPlan, Project, ProjectAnalysis, ProjectInputs, SignoffBody, SuggestedInputs,
 } from '../types/api';
 
 /** Fill optional collections so the UI never trips on a partial analysis. */
@@ -26,7 +26,10 @@ export function normalizeAnalysis(a: Partial<ProjectAnalysis> | null | undefined
 }
 
 export function normalizeProject(p: Project): Project {
-  return { ...p, branch: p.branch ?? null, error: p.error ?? null, inputs: p.inputs ?? {}, analysis: normalizeAnalysis(p.analysis) };
+  return {
+    ...p, branch: p.branch ?? null, error: p.error ?? null, inputs: p.inputs ?? {}, analysis: normalizeAnalysis(p.analysis),
+    target_config: p.target_config ?? null, secrets_set: p.secrets_set ?? [], runtime: p.runtime ?? null,
+  };
 }
 
 /** Accepts {code: {name,count,examples}} or the older {code: count}. */
@@ -52,12 +55,12 @@ export function normalizeEvaluation(e: Evaluation): Evaluation {
     ...e,
     progress: e.progress ?? { done: 0, total: 0 },
     error: e.error ?? null,
-    synthetic: Boolean(e.synthetic),
     metrics: e.metrics ?? {},
     decision: e.decision ?? null,
     scorecard: e.scorecard ?? {},
     failure_taxonomy: normalizeTaxonomy(e.failure_taxonomy as unknown),
     items: (e.items ?? []).map((i) => ({ ...i, contexts: i.contexts ?? [], scores: i.scores ?? {} })),
+    unchecked: e.unchecked ?? { count: (e.items ?? []).filter((i) => i.passed === null).length, ids: [] },
   };
 }
 
@@ -81,6 +84,20 @@ export const projectsApi = {
   saveSecrets: (id: string, secrets: Record<string, string>) =>
     api<unknown>(`/api/projects/${encodeURIComponent(id)}/secrets`, jsonInit('POST', { values: secrets })),
   regression: (id: string) => api<unknown>(`/api/projects/${encodeURIComponent(id)}/regression`),
+  saveTargetConfig: (id: string, cfg: TargetConfig) =>
+    api<TargetConfig>(`/api/projects/${encodeURIComponent(id)}/target-config`, jsonInit('POST', cfg)),
+  /** Sends ONE probe question through the saved endpoint and target configuration. */
+  testTarget: (id: string, question: string) =>
+    api<TargetTestResult>(`/api/projects/${encodeURIComponent(id)}/target-test`, jsonInit('POST', { question })),
+};
+
+export const policyApi = {
+  template: () => api<PolicyTemplate>('/api/policy/template'),
+};
+
+export const llmApi = {
+  /** Setting NAMES only, never values. */
+  status: () => api<LlmStatus>('/api/llm/status'),
 };
 
 export const evaluationsApi = {
@@ -96,6 +113,9 @@ export const evaluationsApi = {
     api<unknown>(`/api/evaluations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   signoff: (id: string, body: SignoffBody) =>
     api<unknown>(`/api/evaluations/${encodeURIComponent(id)}/signoff`, jsonInit('POST', body)),
+  /** A human confirms one advisory (model-written) item; verdicts are recomputed. */
+  confirmItem: (id: string, itemId: string, reviewer: string) =>
+    api<unknown>(`/api/evaluations/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}/confirm`, jsonInit('POST', { reviewer })),
   addRegression: (id: string, itemIds: string[]) =>
     api<unknown>(`/api/evaluations/${encodeURIComponent(id)}/regression`, jsonInit('POST', { item_ids: itemIds })),
   monitoringPlan: (id: string) =>

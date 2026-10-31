@@ -77,5 +77,29 @@ def replay_cmd(ledger: Path, policy: Path,
     typer.echo(f"OK digest={result.digest} chain_ok={result.chain_ok}")
 
 
+@app.command(name="verify-bundle")
+def verify_bundle_cmd(bundle: Path) -> None:
+    """Verify an evidence bundle zip: file hashes, ledger hash chains, re-derived report.
+
+    Exit 0 when everything matches; 1 with a precise diff on any tamper or mismatch; 2 when the
+    file cannot be read.
+    """
+    from qe.qareport.verify import verify_bundle
+
+    if not bundle.is_file():
+        typer.echo(f"error: no such file: {bundle}", err=True)
+        raise typer.Exit(code=2)
+    result = verify_bundle(bundle)
+    for line in result.checks:
+        typer.echo(f"ok: {line}")
+    if result.ok:
+        typer.echo("VERIFIED: the bundle is internally consistent and re-derives identically")
+        return
+    for line in result.problems:
+        typer.echo(f"FAIL: {line}", err=True)
+    typer.echo(f"NOT VERIFIED: {len(result.problems)} problem(s)", err=True)
+    raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

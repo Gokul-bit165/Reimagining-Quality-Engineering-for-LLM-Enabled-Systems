@@ -1,0 +1,35 @@
+# Static remediation guidance per failure class. GUIDANCE ONLY: generic engineering advice that
+# is the same for every report. It is not derived from the evidence and not a diagnosis of the
+# specific defect. Maintained in version control; changes require code review.
+guidance_id: qe-remediation-guidance
+version: "1"
+label: "Guidance (static, not derived from this run's evidence)"
+classes:
+  LLM02:
+    - "Keep secrets and credentials out of the documents and prompts the model can read."
+    - "Add output filtering for known secret patterns before the response leaves the service."
+    - "Re-run the exfiltration probes after every prompt, retrieval or permission change."
+  QE-INJ:
+    - "Treat retrieved text and user text as data: separate instructions from content in the prompt."
+    - "Constrain what the application may output or call (allow-lists for URLs and tools)."
+    - "Re-run the injection probes after any prompt or tool-permission change."
+  QE-FAB:
+    - "Instruct the model to answer only from the returned passages and to decline otherwise."
+    - "Check generated claims against the retrieved text before returning an answer."
+    - "Review the reference answer first if the claim looks right: references can be wrong."
+  QE-CIT:
+    - "Make the application emit citations that map to document names or passage indices."
+    - "Validate citations against the retrieved set before returning the answer."
+  QE-RET:
+    - "Inspect chunking, embedding model and top-k for the failing questions."
+    - "Check that the reference evidence exists in the indexed corpus."
+  QE-CON:
+    - "Reduce sampling randomness (temperature, seed) where the product allows it."
+    - "Investigate whether retrieval order or ties differ between calls."
+  QE-INC:
+    - "Review refusal thresholds and prompts that make the application decline answerable questions."
+  target_error:
+    - "Inspect the target's logs for the failing calls (timeouts, rate limits, crashes)."
+    - "Confirm the evaluation harness timeout and concurrency are appropriate for the target."
+default:
+  - "No static guidance exists for this failure class."

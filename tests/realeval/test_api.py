@@ -33,18 +33,20 @@ def _wire() -> Iterator[None]:
 
 
 def start(**kw: Any) -> dict[str, Any]:
-    r = client.post("/api/evaluations", json={"project_id": "p1", "max_questions": 12, **kw})
+    r = client.post("/api/evaluations", json={"project_id": "p1", "max_questions": 12,
+                                              "use_example_policy": True, **kw})
     assert r.status_code == 202, r.text
     return jobs.wait(r.json()["id"])
 
 
 def test_contract_shape() -> None:
     r = client.post("/api/evaluations", json={"project_id": "p1", "max_questions": 12,
-                                              "generate_questions": False})
+                                              "generate_questions": False,
+                                              "use_example_policy": True})
     assert r.status_code == 202 and set(r.json()) == {"id", "state"}
     rec = jobs.wait(r.json()["id"])
     got = client.get(f"/api/evaluations/{rec['id']}").json()
-    for key in ("id", "project_id", "state", "progress", "error", "synthetic", "metrics",
+    for key in ("id", "project_id", "state", "progress", "error", "metrics",
                 "decision", "items", "scorecard", "failure_taxonomy", "regression"):
         assert key in got
     assert got["state"] == "done" and got["progress"]["done"] == got["progress"]["total"]
@@ -80,13 +82,16 @@ def test_missing_ingest_gives_409_and_bad_policy_422() -> None:
     assert r.status_code == 422
 
 
-def test_no_questions_and_no_generator_is_422_and_synthetic_opt_in() -> None:
+def test_no_questions_and_no_generator_is_422_naming_env_vars(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("QE_ALLOW_REAL_LLM", "GROQ_API_KEY", "OPENROUTER_API_KEY", "QE_LLM_MODEL"):
+        monkeypatch.delenv(var, raising=False)
     resolver.set_resolver(lambda pid: ResolvedProject(
         pid, "d", FakeRagTarget([DOC["text"]]), [DOC], [], authorized=True))
-    assert client.post("/api/evaluations", json={"project_id": "p1"}).status_code == 422
-    rec = start(allow_synthetic=True, max_questions=6)
-    assert rec["synthetic"] is True
-    assert "SYNTHETIC" in " ".join(rec["decision"]["reasons"])
+    r = client.post("/api/evaluations", json={"project_id": "p1", "use_example_policy": True})
+    assert r.status_code == 422
+    assert "QE_ALLOW_REAL_LLM" in r.text and "QE_LLM_MODEL" in r.text
+    assert "synthetic" not in r.text.lower()
 
 
 def test_signoff_regression_dataset_report_monitoring() -> None:
@@ -169,7 +174,6 @@ def test_default_resolver_uses_ingest_store(monkeypatch: pytest.MonkeyPatch) -> 
 class AdvisoryGen:
     """Stands in for an LLM question generator: items are advisory until a human confirms."""
 
-    synthetic = False
     family = "fake-llm"
 
     def generate(self, documents: list[dict[str, str]], n: int) -> list[Any]:
@@ -184,7 +188,7 @@ class AdvisoryGen:
 def test_advisory_items_do_not_gate_and_confirmation_recomputes(
         monkeypatch: pytest.MonkeyPatch) -> None:
     from qe.ui import routes_eval
-    monkeypatch.setattr(routes_eval, "generator_from_env", lambda allow: AdvisoryGen())
+    monkeypatch.setattr(routes_eval, "generator_from_env", lambda *a, **k: AdvisoryGen())
     resolver.set_resolver(lambda pid: ResolvedProject(
         pid, "d", FakeRagTarget([DOC["text"]], "hallucinating"), [DOC], [], authorized=True))
     rec = start(max_questions=30, include_security=False)

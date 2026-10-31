@@ -127,7 +127,7 @@ export const ConnectPage: React.FC = () => {
         <div className="stack" style={{ gap: 8 }}>
           <label className="fcheck">
             <input type="checkbox" checked={authorized} onChange={(e) => setAuthorized(e.target.checked)} aria-describedby="auth-help" data-testid="authorized" />
-            <span><strong>I own this app or am allowed to test it.</strong> I will use synthetic or non-sensitive data only.</span>
+            <span><strong>I own this app or am allowed to test it.</strong> I will use non-sensitive data only.</span>
           </label>
           <span id="auth-help" className="field__hint">
             Only test applications you own or have written permission to test. Do not upload real customer data, credentials, or personal information.
@@ -156,7 +156,7 @@ export const ConnectPage: React.FC = () => {
           {projects.data!.map((p) => (
             <li key={p.id} className="item">
               <div className="frow frow--between" style={{ padding: '10px 14px' }}>
-                <a href={projectHref(p.id, p.analysis ? 'understand' : 'understand')} style={{ color: 'var(--c-accent-ink)', fontWeight: 600, overflowWrap: 'anywhere' }}>
+                <a href={projectHref(p.id, 'understand')} style={{ color: 'var(--c-accent-ink)', fontWeight: 600, overflowWrap: 'anywhere' }}>
                   {p.repo_url.replace(/^https:\/\/github\.com\//, '')}
                 </a>
                 <span className="frow">
@@ -164,6 +164,11 @@ export const ConnectPage: React.FC = () => {
                   <button type="button" className="fbtn fbtn--ghost fbtn--sm" onClick={() => void remove(p.id)} aria-label={`Delete ${p.repo_url}`}>Delete</button>
                 </span>
               </div>
+              {p.state === 'failed' && (
+                <p className="field__error" style={{ margin: 0, padding: '0 14px 10px' }} data-testid="project-failure">
+                  Analysis failed: {p.error ?? 'the backend gave no reason.'}
+                </p>
+              )}
             </li>
           ))}
         </ul>

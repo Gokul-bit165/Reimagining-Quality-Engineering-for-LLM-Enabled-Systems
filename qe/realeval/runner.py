@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,12 +24,16 @@ from qe.core.events import Event, EventType, ProducerKind
 from qe.core.ledger import SQLiteLedger
 from qe.core.schemas import Policy
 from qe.realeval.assemble import assemble
+from qe.realeval.calibration import decide_gate, load_for
 from qe.realeval.dataset import EvalItem, QuestionGenerator, build_dataset, security_probes
-from qe.realeval.dynamic import mutate_failures, normalize_risks, risk_variants
+from qe.realeval.dynamic import RISK_OPERATORS, mutate_failures, normalize_risks, risk_variants
+from qe.realeval.judge import SemanticJudge
 from qe.realeval.resolver import ResolvedProject
 from qe.realeval.target import RagTarget, TargetAnswer
 
 PRODUCER = "realeval"
+DEFAULT_MAX_QUESTIONS = 50  # a statistical choice: 20 gave intervals too wide to conclude
+DEFAULT_REPEATS = 3         # 3 repeats expose nondeterministic answers
 
 
 class Judge(Protocol):
@@ -50,8 +54,8 @@ class Budget:
 
 @dataclass
 class EvalParams:
-    max_questions: int = 20
-    repeats: int = 1
+    max_questions: int = DEFAULT_MAX_QUESTIONS
+    repeats: int = DEFAULT_REPEATS
     include_security: bool = True
     generate_questions: bool = True
     policy: Policy | None = None
@@ -75,31 +79,71 @@ def _append(ledger: SQLiteLedger, key: str, etype: EventType, payload: dict[str,
                         payload=payload))
 
 
+def _dedupe(items: Sequence[EvalItem]) -> list[EvalItem]:
+    """First occurrence wins, order preserved."""
+    out: dict[str, EvalItem] = {}
+    for i in items:
+        out.setdefault(i.id, i)
+    return list(out.values())
+
+
+def _diverse(probes: Sequence[EvalItem]) -> list[EvalItem]:
+    """One probe of each (kind, oracle) first, then the rest: a small cap still covers every
+    attack family (injection, forbidden URL, exfiltration) instead of only the first one."""
+    first: dict[tuple[str, str], EvalItem] = {}
+    for p in probes:
+        first.setdefault(((p.probe or {}).get("kind", ""), (p.probe or {}).get("oracle", "")), p)
+    head = list(first.values())
+    return [*head, *(p for p in probes if p not in head)]
+
+
 def build_items(params: EvalParams, inputs: Inputs, budget: Budget,
-                ) -> tuple[list[EvalItem], bool, list[str]]:
+                ) -> tuple[list[EvalItem], list[str], dict[str, Any]]:
+    """Items to run, notes, and extra config flags (require_citations).
+
+    `max_questions` is a HARD cap on the total number of items run, including regression,
+    security and mutated items. Priority when over the cap: regression suite items, then the
+    fixed security probes (reserving at most half the cap), base questions (user, then
+    generated), risk variants, mutated prior failures, remaining security items."""
     p = inputs.project
-    ds = build_dataset(p.documents, p.qa_pairs, max_questions=params.max_questions,
+    cap = params.max_questions
+    ds = build_dataset(p.documents, p.qa_pairs, max_questions=cap,
                        generate_questions=params.generate_questions, include_security=False,
                        generator=inputs.generator, canaries=p.canaries)
-    risks, unknown = normalize_risks([*params.risk_focus, *p.risk_flags])
+    risks, unmapped = normalize_risks([*params.risk_focus, *p.risk_flags])
     notes = list(ds.notes)
-    if unknown:
-        notes.append(f"unrecognised risk labels ignored: {unknown}")
+    if unmapped:
+        notes.append(f"risk labels with no mapped test scenario (reported, no variants made): "
+                     f"{unmapped}")
     notes.append(f"risk scenarios used: {risks}; seed={params.seed}")
-    variants = risk_variants(ds.items, risks, params.seed, max(1, params.max_questions // 4))
+    require_citations = "citation_check" in risks
+    if require_citations:
+        notes.append("analysis flagged 'no-citation-handling': citation checks are mandatory "
+                     "(an answer without a resolvable citation fails citation_valid)")
+    variants = risk_variants(ds.items, risks, params.seed, max(1, cap // 4), p.documents)
+    if not params.include_security:  # security off means NO attack items, probes or variants
+        variants = [v for v in variants if v.source != "security"]
+    if any("false_premise_unanswerable" in RISK_OPERATORS[r] for r in risks) and not any(
+            (v.lineage or {}).get("operator") == "false_premise_unanswerable" for v in variants):
+        notes.append("false-premise operator skipped: no entity names (or no unmentioned "
+                     "aspects) found in the supplied documents")
     mutated = mutate_failures(inputs.prior_failures, params.seed)
     security = security_probes(p.documents, p.canaries) if params.include_security else []
-    ordered = [*inputs.regression_items, *ds.items, *variants, *mutated]
-    uniq = list({i.id: i for i in reversed(ordered)}.values())[::-1]  # first occurrence wins
-    body = [i for i in uniq if i.source != "security"]
-    sec_all = [*security, *(v for v in uniq if v.source == "security")]
-    sec = list({i.id: i for i in reversed(sec_all)}.values())[::-1]
+    reserved = _diverse(security)[: cap // 2]
+    ordered = _dedupe([*inputs.regression_items, *reserved, *variants[: cap // 4],
+                       *mutated[: cap // 4], *ds.items, *variants, *mutated, *security])
+    kept = ordered[:cap]
+    if len(ordered) > cap:
+        notes.append(f"TRUNCATED by max_questions={cap} (hard cap on total items, regression "
+                     f"first): {len(ordered)} -> {cap}")
+    body = [i for i in kept if i.source != "security"]
+    sec = [i for i in kept if i.source == "security"]
     room = max(0, budget.max_calls // params.repeats)
     if len(body) + len(sec) > room:
         notes.append(f"TRUNCATED by max_calls={budget.max_calls}: {len(body) + len(sec)} -> {room}")
         body = body[: max(0, room - len(sec))]
         sec = sec[:room]
-    return [*body, *sec], ds.synthetic, notes
+    return [*body, *sec], notes, {"require_citations": require_citations}
 
 
 def _run_target(target: RagTarget, question: str) -> TargetAnswer:
@@ -116,16 +160,23 @@ def run_evaluation(eval_id: str, ledger_path: Path, params: EvalParams, inputs: 
     if inputs.judge and inputs.generator and inputs.judge.family == inputs.generator.family:
         raise JudgeNotIndependentError("judge must come from a different model family than the "
                                        "question generator (R4)")
-    items, synthetic, notes = build_items(params, inputs, budget)
-    truncated = any(n.startswith("TRUNCATED") for n in notes)
+    items, notes, flags = build_items(params, inputs, budget)
+    truncated = any(n.startswith("TRUNCATED by max_calls") for n in notes)
     config: dict[str, Any] = {
         "eval_id": eval_id, "project_id": inputs.project.project_id,
         "items": [i.model_dump(mode="json") for i in items],
         "doc_names": [d["name"] for d in inputs.project.documents], "repeats": params.repeats,
-        "synthetic": synthetic, "seed": params.seed, "notes": notes,
+        "seed": params.seed, "notes": notes, "include_security": params.include_security,
+        "max_questions": params.max_questions, **flags,
         "policy": params.policy.model_dump(mode="json") if params.policy else None,
         "prior_pass": inputs.prior_pass, "risk_focus": params.risk_focus,
         "budget": {"max_calls": budget.max_calls, "timeout_s": budget.timeout_s}}
+    semantic = inputs.judge if isinstance(inputs.judge, SemanticJudge) else None
+    if semantic is not None:  # ADR-0009: gate only with a fresh calibration meeting the policy
+        semantic.set_gate(decide_gate(
+            semantic, params.policy.judge_min_agreement if params.policy else None,
+            load_for(semantic.key)))
+        config["judge"] = semantic.config()
     ledger = SQLiteLedger(ledger_path)
     runs: dict[str, list[dict[str, Any]]] = {}
     incomplete: str | None = "budget max_calls truncated the dataset" if truncated else None
@@ -160,10 +211,16 @@ def run_evaluation(eval_id: str, ledger_path: Path, params: EvalParams, inputs: 
             if on_progress:
                 on_progress(assemble({**config, "incomplete": "in progress"}, runs))
         judge_out = _judge(inputs.judge, items, runs)
-        result = assemble({**config, "incomplete": incomplete}, runs, judge_out)
-        _write_outcome(ledger, result, judge_out, incomplete, state)
+        result = assemble({**config, "incomplete": incomplete}, runs, judge_out,
+                          judge_service=semantic)
+        _write_outcome(ledger, result, judge_out, incomplete, state,
+                       semantic.calls() if semantic else [])
     finally:
         ledger.close()
+    unchecked = result["unchecked"]["count"]
+    if unchecked:
+        notes = [*notes, f"{unchecked} item(s) UNCHECKED: no reference answer and answerable not "
+                         "declared, so nothing could be verified; excluded from all rates"]
     return {**result, "state": state, "error": incomplete if state != "done" else None,
             "notes": notes, "config": {k: v for k, v in config.items() if k != "items"}}
 
@@ -175,13 +232,18 @@ def _judge(judge: Judge | None, items: list[EvalItem], runs: Mapping[str, list[d
         return out
     for it in items:
         rec = runs.get(it.id)
-        if rec and it.reference_answer and not rec[0]["error"]:
-            out[it.id] = judge.judge(it.question, it.reference_answer, rec[0]["answer"])
+        if not rec or rec[0]["error"] or it.source == "security":
+            continue
+        if it.reference_answer or it.answerable is None:  # no reference: advisory plausibility
+            out[it.id] = judge.judge(it.question, it.reference_answer or "", rec[0]["answer"])
     return out
 
 
 def _write_outcome(ledger: SQLiteLedger, result: dict[str, Any], judge_out: dict[str, Any],
-                   incomplete: str | None, state: str) -> None:
+                   incomplete: str | None, state: str,
+                   judge_calls: Sequence[Mapping[str, Any]] = ()) -> None:
+    for call in judge_calls:  # raw judge I/O (model, prompt hash, response): offline replay
+        _append(ledger, f"judgecall:{call['key'][:40]}", EventType.EVIDENCE_RECORDED, dict(call))
     for row in result["items"]:
         _append(ledger, f"everdict:{row['id']}", EventType.VERDICT_ISSUED,
                 {"item_id": row["id"], "scores": row["scores"], "passed": row["passed"],
@@ -204,9 +266,12 @@ def replay(ledger_path: Path) -> dict[str, Any]:
         status: dict[str, Any] = {}
         runs: dict[str, list[dict[str, Any]]] = {}
         confirmed: list[str] = []
+        judge_calls: list[dict[str, Any]] = []
         for e in ledger.entries():
             pl = e.event.payload
-            if e.event.key.startswith("confirm:"):
+            if e.event.key.startswith("judgecall:"):
+                judge_calls.append(dict(pl))
+            elif e.event.key.startswith("confirm:"):
                 confirmed.append(str(pl["item_id"]))
             elif e.event.key == "evalconfig":
                 config = pl
@@ -218,6 +283,8 @@ def replay(ledger_path: Path) -> dict[str, Any]:
         ledger.close()
     if not config:
         raise ValueError("ledger has no evaluation config")
+    service = (SemanticJudge.for_replay(config["judge"], judge_calls)
+               if config.get("judge") else None)
     result = assemble({**config, "incomplete": status.get("incomplete")}, runs,
-                      status.get("judge") or {}, confirmed)
+                      status.get("judge") or {}, confirmed, judge_service=service)
     return {**result, "ledger_ok": report.ok, "ledger_entries": report.checked}

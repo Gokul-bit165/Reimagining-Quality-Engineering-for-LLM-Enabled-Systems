@@ -1,7 +1,7 @@
 """Environment adapters: build a sandbox app and apply attacker-granted setup operations.
 
 The only place that reaches into sandbox app internals (state/doc store). `sandbox_apps` is imported
-lazily so `qe` does not depend on the demo apps at import time.
+lazily so `qe` does not depend on the sandbox apps at import time.
 """
 
 from __future__ import annotations

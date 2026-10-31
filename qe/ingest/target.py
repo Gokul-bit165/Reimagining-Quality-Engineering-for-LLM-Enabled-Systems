@@ -1,6 +1,7 @@
 """SandboxedRepoTarget: a RagTarget over a user's app. Repo code never runs on the host.
 
-Modes: endpoint (user-deployed app over HTTP), docker (isolated container, no network),
+Modes: endpoint (user-deployed app over HTTP), docker (isolated container, no network;
+the managed build-and-run service mode lives in qe.ingest.docker_runner),
 static_only (nothing is executed; every ask() reports that explicitly).
 """
 
@@ -17,6 +18,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from qe.ingest.limits import (
     DOCKER_CPUS,
@@ -29,6 +31,14 @@ from qe.ingest.limits import (
 )
 from qe.ingest.models import ExecutionMode
 from qe.ingest.netguard import EndpointError, ResolvedEndpoint, resolve_endpoint
+from qe.ingest.target_config import (
+    TargetConfig,
+    TargetParseError,
+    fill_template,
+    parse_response,
+    resolve_headers,
+    scrub,
+)
 from qe.ingest.vault import is_allowed_name
 from qe.realeval.target import TargetAnswer
 
@@ -70,16 +80,25 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
         self.sock = self._context.wrap_socket(raw, server_hostname=self.host)  # type: ignore[attr-defined]
 
 
-def docker_available() -> bool:
+def docker_status() -> tuple[bool, str]:
+    """(daemon reachable, precise reason when not)."""
     exe = shutil.which("docker")
     if not exe:
-        return False
+        return False, "docker is not installed"
     try:
         r = subprocess.run([exe, "version", "--format", "{{.Server.Version}}"],  # noqa: S603
                            capture_output=True, timeout=5, check=False, shell=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return r.returncode == 0 and bool(r.stdout.strip())
+    except subprocess.TimeoutExpired:
+        return False, "docker daemon not responding"
+    except OSError:
+        return False, "docker cannot be executed"
+    if r.returncode == 0 and r.stdout.strip():
+        return True, ""
+    return False, "docker daemon not running"
+
+
+def docker_available() -> bool:
+    return docker_status()[0]
 
 
 def build_docker_args(name: str, workspace: Path, module: str, func: str,
@@ -133,8 +152,14 @@ def _ctx_text(c: Any) -> str:
 class SandboxedRepoTarget:
     def __init__(self, mode: ExecutionMode, *, endpoint_url: str | None = None,
                  workspace: Path | None = None, entry_file: str = "", entry_func: str = "",
-                 secrets: dict[str, str] | None = None) -> None:
+                 secrets: dict[str, str] | None = None,
+                 target_config: TargetConfig | None = None,
+                 trusted_local: bool = False) -> None:
         self.mode = mode
+        self.trusted_local = trusted_local
+        self.target_config = target_config
+        self.capture_raw = False
+        self.last_raw: str | None = None
         self.endpoint_url = endpoint_url
         self.workspace = workspace
         self.entry_file = entry_file
@@ -142,6 +167,9 @@ class SandboxedRepoTarget:
         self._secrets = dict(secrets or {})
         self._container = f"qe-{uuid.uuid4().hex[:12]}"
         self._killed = False
+
+    def close(self) -> None:
+        """Nothing to release for endpoint/function modes (managed docker targets override)."""
 
     def kill(self) -> None:
         """Kill switch: stop any running container and refuse further asks."""
@@ -161,6 +189,8 @@ class SandboxedRepoTarget:
                 ans, ctx = self._ask_docker(question)
             else:
                 return TargetAnswer(error="static_only: not executed (no endpoint or Docker)")
+        except TargetParseError as exc:  # precise, already truncated and scrubbed
+            return TargetAnswer(latency_s=time.perf_counter() - start, error=str(exc)[:900])
         except (RuntimeError, EndpointError, OSError, ValueError,
                 subprocess.SubprocessError) as exc:
             return TargetAnswer(latency_s=time.perf_counter() - start,
@@ -170,30 +200,41 @@ class SandboxedRepoTarget:
     def _ask_endpoint(self, question: str) -> tuple[str, list[str]]:
         if not self.endpoint_url:
             raise RuntimeError("no endpoint_url configured")
-        ep = resolve_endpoint(self.endpoint_url)  # validated + pinned on every call
-        body = json.dumps({"question": question, "query": question, "input": question}).encode()
+        cfg = self.target_config or TargetConfig()
+        # validated + pinned on every call
+        ep = resolve_endpoint(self.endpoint_url, trusted_local=self.trusted_local)
+        extra = resolve_headers(cfg.headers, self._secrets)
+        template = (fill_template(cfg.request_template, question)
+                    if cfg.request_template is not None
+                    else {"question": question, "query": question, "input": question})
+        path, body = ep.path, None
+        if cfg.method == "GET":
+            path = f"{ep.path}?{urlencode({k: str(v) for k, v in template.items()})}"
+        else:
+            body = json.dumps(template).encode()
+        headers = {"Content-Type": "application/json",
+                   "Accept": "application/json, text/event-stream, text/plain", **extra}
         conn: http.client.HTTPConnection = (
             _PinnedHTTPS(ep, ENDPOINT_TIMEOUT_S) if ep.scheme == "https"
             else _PinnedHTTP(ep, ENDPOINT_TIMEOUT_S))  # http.client never uses proxy env vars
         try:
-            conn.request("POST", ep.path, body=body,
-                         headers={"Content-Type": "application/json"})
+            conn.request(cfg.method, path, body=body, headers=headers)
             resp = conn.getresponse()
             if 300 <= resp.status < 400:
                 raise RuntimeError("endpoint answered with a redirect; redirects are not followed")
             data = resp.read(ENDPOINT_MAX_RESPONSE_BYTES + 1)
-            status = resp.status
+            status, ctype = resp.status, resp.getheader("Content-Type") or ""
         finally:
             conn.close()
         if len(data) > ENDPOINT_MAX_RESPONSE_BYTES:
             raise RuntimeError("response exceeded the size limit")
+        text = data.decode("utf-8", errors="replace")
+        if self.capture_raw:
+            self.last_raw = scrub(text, self._secrets, 500)
         if status >= 400:
-            raise RuntimeError(f"endpoint returned HTTP {status}")
-        try:
-            raw: Any = json.loads(data.decode("utf-8", errors="replace"))
-        except ValueError:
-            raw = data.decode("utf-8", errors="replace")
-        return parse_app_response(raw)
+            raise RuntimeError(f"endpoint returned HTTP {status}: "
+                               f"{scrub(text, self._secrets)}")
+        return parse_response(text, ctype, cfg, self._secrets)
 
     def _ask_docker(self, question: str) -> tuple[str, list[str]]:
         if self.workspace is None or not self.entry_file or not self.entry_func:
@@ -224,7 +265,10 @@ class SandboxedRepoTarget:
 
 
 _DOCKER_CLIENT_ENV = ("PATH", "SYSTEMROOT", "USERPROFILE", "HOME", "APPDATA", "TEMP", "TMP",
-                      "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
+                      "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
+                      # Windows: where the docker CLI finds its plugins (buildx) and home
+                      "PROGRAMFILES", "PROGRAMW6432", "PROGRAMDATA", "ALLUSERSPROFILE",
+                      "LOCALAPPDATA", "SYSTEMDRIVE", "COMSPEC", "HOMEDRIVE", "HOMEPATH")
 
 
 def _docker_client_env() -> dict[str, str]:

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MetricCard, SyntheticBadge, VerdictPanel } from '../src/components/flow/ui';
+import { MetricCard, VerdictPanel } from '../src/components/flow/ui';
 import { ConnectPage, validateRepoUrl } from '../src/pages/ConnectPage';
 import { UnderstandStep } from '../src/pages/project/UnderstandStep';
 import { evaluationCsv } from '../src/utils/reportExporter';
@@ -36,10 +36,6 @@ describe('result primitives', () => {
     expect(screen.getByText('PENDING HUMAN REVIEW')).toBeInTheDocument();
   });
 
-  it('shows the SYNTHETIC DATA badge', () => {
-    render(<SyntheticBadge />);
-    expect(screen.getByText(/SYNTHETIC DATA/)).toBeInTheDocument();
-  });
 });
 
 describe('ConnectPage', () => {
@@ -114,15 +110,15 @@ describe('UnderstandStep', () => {
 });
 
 describe('evaluation export', () => {
-  it('CSV marks synthetic data and carries intervals', () => {
+  it('CSV carries intervals', () => {
     const ev: Evaluation = {
-      id: 'e1', project_id: 'p1', state: 'done', progress: { done: 1, total: 1 }, error: null, synthetic: true,
+      id: 'e1', project_id: 'p1', state: 'done', progress: { done: 1, total: 1 }, error: null,
       metrics: { grounding: { value: 0.5, ci_low: 0.2, ci_high: 0.8, n: 10 } },
       decision: { verdict: 'INSUFFICIENT_EVIDENCE', reasons: ['n too small'] },
       items: [{ id: 'i1', question: 'Q, with comma', reference_answer: null, answer: 'A', contexts: ['c1', 'c2'], scores: {}, passed: false, failure_reason: 'ungrounded', source: 'user' }],
     };
     const csv = evaluationCsv(ev);
-    expect(csv).toContain('YES: SYNTHETIC DATA');
+    expect(csv).not.toMatch(/synthetic/i);
     expect(csv).toContain('INSUFFICIENT_EVIDENCE');
     expect(csv).toContain('"grounding","0.5","0.2","0.8","10"');
     expect(csv).toContain('"Q, with comma"');

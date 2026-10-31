@@ -85,10 +85,9 @@ describe('projectsApi / evaluationsApi', () => {
     expect(p.inputs).toEqual({});
   });
 
-  it('normalizes evaluations: synthetic defaults to false, items get contexts', async () => {
+  it('normalizes evaluations: items get contexts', async () => {
     mockFetch(200, { id: 'e1', project_id: 'p1', state: 'running', items: [{ id: 'i', question: 'q', source: 'user' }] });
     const e = await evaluationsApi.get('e1');
-    expect(e.synthetic).toBe(false);
     expect(e.items[0].contexts).toEqual([]);
     expect(e.progress).toEqual({ done: 0, total: 0 });
   });

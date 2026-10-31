@@ -40,6 +40,7 @@ packages = ["qe"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["docker: needs a reachable docker daemon (skipped otherwise)"]
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]

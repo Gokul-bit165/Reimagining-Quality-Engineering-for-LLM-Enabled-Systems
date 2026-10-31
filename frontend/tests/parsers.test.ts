@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksBinary, parseCsv, parseQaCsv, parseQaJsonl, parseQaText } from '../src/lib/parsers';
+import { looksBinary, parseAnswerable, parseCsv, parseQaCsv, parseQaJsonl, parseQaText } from '../src/lib/parsers';
 import { clearLayout, loadLayout, saveLayout } from '../src/lib/layoutStorage';
 import { parseRoute, projectHref } from '../src/lib/route';
 
@@ -56,12 +56,35 @@ describe('routes', () => {
     expect(parseRoute('#p/abc')).toEqual({ name: 'project', projectId: 'abc', step: 'understand', evalId: null });
     expect(projectHref('abc', 'run', 'ev1')).toBe('#p/abc/run/ev1');
   });
-  it('accepts path-style project links and never treats them as legacy run ids', () => {
+  it('accepts path-style project links', () => {
     expect(parseRoute('#/projects/prj-1/results')).toEqual({ name: 'project', projectId: 'prj-1', step: 'results', evalId: null });
     expect(parseRoute('#some/weird/path')).toEqual({ name: 'notfound', hash: 'some/weird/path' });
   });
-  it('keeps old demo routes reachable', () => {
-    expect(parseRoute('#new')).toEqual({ name: 'legacy', id: 'new' });
-    expect(parseRoute('#scn-1-a-seeded')).toEqual({ name: 'legacy', id: 'scn-1-a-seeded' });
+  it('treats removed legacy routes as not found', () => {
+    expect(parseRoute('#new')).toEqual({ name: 'notfound', hash: 'new' });
+    expect(parseRoute('#bench')).toEqual({ name: 'notfound', hash: 'bench' });
+  });
+});
+
+describe('answerable column', () => {
+  it('parses CSV answerable as tri-state: true, false, and blank = unknown', () => {
+    const r = parseQaCsv('question,reference_answer,answerable\nQ1,A1,true\nQ2,,false\nQ3,A3,\nQ4,,maybe');
+    expect(r.errors).toEqual([]);
+    expect(r.rows).toEqual([
+      { question: 'Q1', reference_answer: 'A1', answerable: true },
+      { question: 'Q2', answerable: false },
+      { question: 'Q3', reference_answer: 'A3' },
+      { question: 'Q4' },
+    ]);
+  });
+  it('parses JSONL booleans and strings, and drops a reference on a not-answerable row with a note', () => {
+    const r = parseQaJsonl('{"question":"Q1","answerable":false,"reference_answer":"x"}\n{"question":"Q2","answerable":"yes"}\n{"question":"Q3"}');
+    expect(r.rows).toEqual([{ question: 'Q1', answerable: false }, { question: 'Q2', answerable: true }, { question: 'Q3' }]);
+    expect(r.errors.join(' ')).toMatch(/Line 1.*not answerable.*dropped/);
+  });
+  it('maps values explicitly', () => {
+    expect(parseAnswerable('No')).toBe(false);
+    expect(parseAnswerable(1)).toBe(true);
+    expect(parseAnswerable('')).toBeNull();
   });
 });

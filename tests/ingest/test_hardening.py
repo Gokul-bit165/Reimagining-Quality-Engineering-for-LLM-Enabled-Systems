@@ -101,6 +101,7 @@ def test_connection_uses_pinned_ip_only(monkeypatch: pytest.MonkeyPatch) -> None
 def test_proxy_env_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     class H(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", "0")))  # avoid RST on close
             body = b'{"answer": "ok"}'
             self.send_response(200)
             self.send_header("content-length", str(len(body)))
@@ -124,6 +125,7 @@ def test_proxy_env_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_redirect_is_not_followed() -> None:
     class H(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", "0")))  # avoid RST on close
             self.send_response(302)
             self.send_header("location", "http://169.254.169.254/")
             self.send_header("content-length", "0")

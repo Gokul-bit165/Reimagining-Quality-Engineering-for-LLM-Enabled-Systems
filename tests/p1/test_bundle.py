@@ -108,3 +108,15 @@ def test_bundle_refuses_nonempty_output_and_corrupt_ledger(tmp_path: Path) -> No
         write_bundle(bad, pol, tmp_path / "b2")
     assert runner.invoke(app, ["bundle", str(bad), "--policy", str(pol),
                                "--out", str(tmp_path / "b3")]).exit_code == 2
+
+
+def test_bundle_leaves_no_sqlite_sidecar_files_and_manifest_matches_dir(tmp_path: Path) -> None:
+    import json
+
+    led, pol = make(tmp_path)
+    out = tmp_path / "b"
+    write_bundle(led, pol, out)
+    names = sorted(p.name for p in out.iterdir())
+    assert not [n for n in names if n.endswith(("-shm", "-wal"))]
+    manifest = json.loads((out / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert sorted([*manifest, "MANIFEST.json"]) == names

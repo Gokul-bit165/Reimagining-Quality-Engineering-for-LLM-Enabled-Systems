@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from qe.ingest import jobs, paths, store
 from qe.ingest.clone import IngestError, resolve_subdir
+from qe.ingest.docker_gateway import validate_egress_hosts
 from qe.ingest.limits import (
     MAX_DOC_NAME,
     MAX_DOC_TEXT,
     MAX_DOCUMENTS,
+    MAX_EGRESS_HOSTS,
     MAX_NOTES,
     MAX_PROJECTS,
     MAX_QA_PAIRS,
@@ -29,6 +31,8 @@ from qe.ingest.limits import (
 from qe.ingest.models import Project, ProjectInputs, QAPair, UserDocument
 from qe.ingest.netguard import EndpointError, redact_url, validate_endpoint_url
 from qe.ingest.suggest import suggest_documents
+from qe.ingest.target import SandboxedRepoTarget
+from qe.ingest.target_config import TargetConfig
 from qe.ingest.upload import MAX_UPLOAD_BYTES
 from qe.ingest.url import RepoUrlError, parse_repo_url
 from qe.ingest.vault import VAULT, SecretError
@@ -81,6 +85,14 @@ class InputsBody(BaseModel):
     endpoint_url: str | None = None
     notes: str | None = Field(default=None, max_length=MAX_NOTES)
     risk_focus: list[str] | None = Field(default=None, max_length=MAX_RISK_FOCUS)
+    egress_allowlist: list[str] | None = Field(default=None, max_length=MAX_EGRESS_HOSTS)
+    app_path: str | None = Field(default=None, max_length=200, pattern=r"^/[A-Za-z0-9._~/\-]*$")
+    app_port: int | None = Field(default=None, ge=1, le=65535)
+
+    @field_validator("egress_allowlist")
+    @classmethod
+    def _egress(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else validate_egress_hosts(v)
 
     @field_validator("documents")
     @classmethod
@@ -108,6 +120,9 @@ class InputsBody(BaseModel):
                 raise ValueError(f"question must be 1-{MAX_QUESTION} characters")
             if q.reference_answer is not None and len(q.reference_answer) > MAX_REFERENCE:
                 raise ValueError(f"reference_answer exceeds {MAX_REFERENCE} characters")
+            if q.answerable is False and (q.reference_answer or "").strip():
+                raise ValueError("an item marked answerable=false must not carry a "
+                                 "reference_answer (the expected behaviour is a refusal)")
         return v
 
     @field_validator("risk_focus")
@@ -258,11 +273,16 @@ def set_inputs(project_id: str, body: InputsBody) -> dict[str, Any]:
     changes = {k: getattr(body, k) for k in body.model_fields_set}
     if "notes" in changes and changes["notes"] is None:
         changes["notes"] = ""
-    changes = {k: v for k, v in changes.items() if v is not None or k == "endpoint_url"}
+    changes = {k: v for k, v in changes.items()
+               if v is not None or k in ("endpoint_url", "app_path", "app_port")}
     inputs = p.inputs.model_copy(update=changes)
     analysis = p.analysis
     if analysis is not None and "endpoint_url" in changes:
-        analysis = jobs.finalize_analysis(analysis, inputs.endpoint_url)
+        try:
+            root: Path | None = resolve_subdir(paths.workspace_dir(p.id), p.subdir)
+        except IngestError:
+            root = None
+        analysis = jobs.finalize_analysis(analysis, inputs.endpoint_url, root)
     updated = p.model_copy(update={"inputs": inputs, "analysis": analysis})
     store.save(updated)
     return inputs.model_dump(mode="json")
@@ -286,6 +306,49 @@ def suggested_inputs(project_id: str) -> dict[str, Any]:
     return {"documents": [{"name": d.name, "text": d.text, "chars": d.chars} for d in docs],
             "note": "Review these, then POST them to /inputs as documents to use as the "
                     "knowledge base."}
+
+
+@router.post("/api/projects/{project_id}/target-config")
+def set_target_config(project_id: str, body: TargetConfig) -> dict[str, Any]:
+    """How to call the endpoint: request template, method, answer/context paths, header names
+    (values are ${SECRET_NAME} references into the vault, never stored here)."""
+    p = _load(project_id)
+    store.save(p.model_copy(update={"target_config": body}))
+    return body.model_dump(mode="json")
+
+
+@router.get("/api/projects/{project_id}/target-config")
+def get_target_config(project_id: str) -> dict[str, Any]:
+    cfg = _load(project_id).target_config
+    return (cfg or TargetConfig()).model_dump(mode="json")
+
+
+class TargetTestBody(BaseModel):
+    question: str = Field(min_length=1, max_length=MAX_QUESTION)
+
+
+@router.post("/api/projects/{project_id}/target-test")
+def test_target_connection(project_id: str, body: TargetTestBody) -> dict[str, Any]:
+    """Send ONE user-supplied probe question through the stored configuration and return the
+    parsed answer/contexts, or the precise failure. Same SSRF protections as evaluation."""
+    from qe.realeval.scoring import contexts_kind
+
+    p = _load(project_id)
+    if not p.authorized:
+        raise HTTPException(403, "project is not marked authorized")
+    if not p.inputs.endpoint_url:
+        raise HTTPException(409, "no endpoint_url set for this project (POST /inputs first)")
+    target = SandboxedRepoTarget("endpoint", endpoint_url=p.inputs.endpoint_url,
+                                 secrets=VAULT.get(p.id), target_config=p.target_config)
+    target.capture_raw = True
+    ans = target.ask(body.question)
+    kind = contexts_kind(ans.contexts)
+    return {"ok": ans.error is None, "answer": ans.answer, "contexts": ans.contexts,
+            "contexts_kind": kind, "latency_s": round(ans.latency_s, 4), "error": ans.error,
+            "raw_preview": target.last_raw,
+            "warnings": ([] if kind != "ids" else [
+                "contexts look like ids/filenames, not passage text: faithfulness and retrieval "
+                "cannot be measured; point context_paths at the passage text if available"])}
 
 
 @router.post("/api/projects/{project_id}/secrets")

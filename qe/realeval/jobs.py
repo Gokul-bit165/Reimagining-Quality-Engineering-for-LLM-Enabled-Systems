@@ -17,6 +17,7 @@ from qe.core.ledger import SQLiteLedger
 from qe.core.schemas import Signoff
 from qe.realeval import audit
 from qe.realeval.dataset import EvalItem
+from qe.realeval.resolver import close_target, prepare_target
 from qe.realeval.runner import Budget, EvalParams, Inputs, replay, run_evaluation
 
 EVAL_ID = re.compile(r"^eval-[0-9a-f]{8}$")
@@ -105,7 +106,7 @@ def list_all() -> list[dict[str, Any]]:
         return []
     recs = [load(p.stem) for p in sorted(evals_dir().glob("eval-*.json"))]
     return [{"id": r["id"], "project_id": r["project_id"], "state": r["state"],
-             "progress": r["progress"], "synthetic": r["synthetic"],
+             "progress": r["progress"],
              "verdict": r["decision"]["verdict"] if r.get("decision") else None,
              "status": r["decision"].get("status") if r.get("decision") else None,
              "created": r["created"]} for r in recs if r]
@@ -130,8 +131,8 @@ def prior_context(project_id: str) -> tuple[list[EvalItem], dict[str, bool]]:
         "id": r["id"], "question": r["question"], "reference_answer": r["reference_answer"],
         "source": r["source"], "answerable": r["answerable"], "risk": r["risk"],
         "lineage": r["lineage"], "probe": r.get("probe")})
-        for r in prev["items"] if not r["passed"] and r["source"] != "security"]
-    return failed, {r["id"]: bool(r["passed"]) for r in prev["items"]}
+        for r in prev["items"] if r["passed"] is False and r["source"] != "security"]
+    return failed, {r["id"]: bool(r["passed"]) for r in prev["items"] if r["passed"] is not None}
 
 
 def start(project_id: str, params: EvalParams, inputs: Inputs, budget: Budget,
@@ -141,7 +142,7 @@ def start(project_id: str, params: EvalParams, inputs: Inputs, budget: Budget,
     rec: dict[str, Any] = {
         "id": eid, "project_id": project_id, "state": "queued",
         "progress": {"done": 0, "total": 0},
-        "error": None, "synthetic": False, "metrics": {}, "scorecard": {}, "items": [],
+        "error": None, "metrics": {}, "scorecard": {}, "items": [],
         "decision": None, "monitoring": monitoring, "failure_taxonomy": {}, "regression": None,
         "created": time.time(),
         "params": {"max_questions": params.max_questions, "repeats": params.repeats,
@@ -154,12 +155,13 @@ def start(project_id: str, params: EvalParams, inputs: Inputs, budget: Budget,
     def snap(part: dict[str, Any]) -> None:
         _save({**rec, "state": "running", "progress": {"done": part["done"], "total":
                part["total"]}, "items": part["items"], "metrics": part["metrics"],
-               "synthetic": part["synthetic"], "scorecard": part["scorecard"]})
+               "scorecard": part["scorecard"]})
 
     def work() -> None:
         final = {**rec, "state": "running"}
         _save(final)
         try:
+            prepare_target(inputs.project.target)  # docker mode: build + start (may be slow)
             res = run_evaluation(eid, evals_dir() / f"{eid}.sqlite", params, inputs, budget,
                                  cancel, snap)
             out = {**rec, **res, "progress": {"done": res["done"], "total": res["total"]}}
@@ -173,6 +175,7 @@ def start(project_id: str, params: EvalParams, inputs: Inputs, budget: Budget,
             audit.log(evals_dir(), "evaluation_failed", evaluation_id=eid, project_id=project_id,
                       error=type(exc).__name__)
         finally:
+            close_target(inputs.project.target)  # containers/network/image: always, even on cancel
             with _LOCK:
                 _RUNNING.pop(eid, None)
 

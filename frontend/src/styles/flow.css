@@ -121,7 +121,9 @@ body { overflow: hidden; }
 .badge[data-tone='ok'] { background: var(--c-ok-bg); color: var(--c-ok); }
 .badge[data-tone='bad'] { background: var(--c-bad-bg); color: var(--c-bad); }
 .badge[data-tone='warn'] { background: var(--c-warn-bg); color: var(--c-warn); }
-.badge--synthetic { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; border-radius: var(--r-sm); font-size: 12px; padding: 4px 10px; }
+/* Not checked is neither pass nor fail: outlined, no state colour. */
+.badge[data-tone='unchecked'] { background: transparent; color: var(--c-ink-2); border: 1px dashed #64748b; }
+.item[data-passed='null'] { border-style: dashed; }
 .banner { display: flex; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-md); border: 1px solid; font-size: 13px; line-height: 1.5; }
 .banner[data-tone='warn'] { background: var(--c-warn-bg); border-color: #fcd34d; color: #78350f; }
 .banner[data-tone='bad'] { background: var(--c-bad-bg); border-color: #fda4af; color: #881337; }

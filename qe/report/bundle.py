@@ -60,20 +60,28 @@ def write_bundle(ledger_path: Path, policy_path: Path, out: Path) -> None:
     if out.exists() and any(out.iterdir()):
         raise FileExistsError(f"output directory is not empty: {out}")
     source = SQLiteLedger(ledger_path)
-    report = source.verify()
-    if not report.ok:
-        raise ValueError(f"ledger failed chain verification: {report.reason}")
-    policy_text = policy_path.read_text(encoding="utf-8")
-    policy = Policy.model_validate(yaml.safe_load(policy_text))
-    out.mkdir(parents=True, exist_ok=True)
-    _copy_sqlite(ledger_path, out / "ledger.sqlite")
-    (out / "policy.yaml").write_bytes(policy_text.encode("utf-8"))
-    pack = build_pack(SQLiteLedger(out / "ledger.sqlite"), policy)
+    try:
+        report = source.verify()
+        if not report.ok:
+            raise ValueError(f"ledger failed chain verification: {report.reason}")
+        policy_text = policy_path.read_text(encoding="utf-8")
+        policy = Policy.model_validate(yaml.safe_load(policy_text))
+        out.mkdir(parents=True, exist_ok=True)
+        _copy_sqlite(ledger_path, out / "ledger.sqlite")
+        (out / "policy.yaml").write_bytes(policy_text.encode("utf-8"))
+        copy = SQLiteLedger(out / "ledger.sqlite")
+        try:  # close before listing the folder: an open WAL connection owns -shm/-wal files
+            pack = build_pack(copy, policy)
+        finally:
+            copy.close()
+        prompt_hashes = _prompt_hashes(source)
+    finally:
+        source.close()
     (out / "pack.json").write_bytes(render_json(pack).encode("utf-8"))
     (out / "pack.md").write_bytes(render_markdown(pack).encode("utf-8"))
     (out / "versions.txt").write_bytes(_versions().encode("utf-8"))
     (out / "prompt_hashes.json").write_bytes(
-        _dump(_prompt_hashes(source)).encode("utf-8"))
+        _dump(prompt_hashes).encode("utf-8"))
     (out / "README.md").write_bytes(README.encode("utf-8"))
     manifest = {p.name: sha256_hex(p.read_bytes().decode("latin-1"))
                 for p in sorted(out.iterdir())}

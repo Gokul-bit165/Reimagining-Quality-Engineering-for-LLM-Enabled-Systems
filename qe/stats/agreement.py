@@ -8,7 +8,7 @@ Definitions: research/benchmarks/evaluation_metrics.md, "Agreement and independe
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 
 
 def kish_n_eff(weights: Sequence[float]) -> float:
@@ -67,3 +67,23 @@ def panel_n_eff(corr: Sequence[Sequence[float]]) -> float:
     if total <= 0:
         return float(k)
     return min(float(k), max(1.0, k * k / total))
+
+
+def cohen_kappa(a: Sequence[Hashable | None], b: Sequence[Hashable | None]) -> float | None:
+    """Cohen's kappa of two label vectors on items where both are decisive (None = abstain).
+
+    None when undefined: no overlap, or chance agreement is 1 (both raters constant and equal).
+    """
+    if len(a) != len(b):
+        raise ValueError("vectors must have equal length")
+    pairs = [(x, y) for x, y in zip(a, b, strict=True) if x is not None and y is not None]
+    n = len(pairs)
+    if n == 0:
+        return None
+    observed = sum(x == y for x, y in pairs) / n
+    labels = {x for x, _ in pairs} | {y for _, y in pairs}
+    chance = sum((sum(x == c for x, _ in pairs) / n) * (sum(y == c for _, y in pairs) / n)
+                 for c in labels)
+    if chance >= 1.0:
+        return None
+    return (observed - chance) / (1.0 - chance)

@@ -8,7 +8,7 @@
 
 **References:** printed lab reports, accounting ledgers, the Edward Tufte "small multiples" restraint. Not SaaS admin templates.
 
-## Tokens (see `qe/ui/static/tokens.css`)
+## Tokens (see `frontend/src/styles/tokens.css`)
 - **Type:** headings and the decision word in a serif stack (Iowan Old Style / Palatino / Georgia) for gravity; UI text in the system sans; hashes and ids in the system mono. System fonts only: the product runs offline.
 - **Color roles:** paper background, ink text, one rule colour; four *semantic* state colours (release, reject, conditional, insufficient) used only for decision state and interval bars, never decoration. All text pairs meet WCAG AA.
 - **Spacing:** 4px base scale. **Radius:** 2px (documents are not pills). **Elevation:** none; separation by hairline rules and whitespace.

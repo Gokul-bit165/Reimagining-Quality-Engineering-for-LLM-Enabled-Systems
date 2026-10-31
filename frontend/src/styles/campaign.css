@@ -1,0 +1,53 @@
+/* Campaign, judge and execution areas. Consumes the flow.css tokens only. */
+
+/* Work areas beside the wizard */
+.toolbar { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; margin: calc(-1 * var(--s-2)) 0 var(--s-5); }
+.toolbar__label { font: 600 11px var(--font-geist); letter-spacing: 0.06em; text-transform: uppercase; color: var(--c-ink-2); margin-right: var(--s-1); }
+.toolbar__link {
+  display: inline-flex; align-items: center; gap: var(--s-2); min-height: 40px; padding: 0 var(--s-3);
+  border: 1px solid var(--c-line); border-radius: var(--r-md); background: var(--c-card); color: var(--c-ink-2);
+  font: 600 13px var(--font-geist); text-decoration: none;
+}
+.toolbar__link:hover { background: var(--c-idle-bg); }
+.toolbar__link[aria-current='page'] { border-color: var(--c-accent); background: #eef2ff; color: var(--c-accent-ink); }
+.toolbar__link .material-symbols-outlined { font-size: 18px; }
+
+/* Stage tracker */
+.stagelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--c-line); border-radius: var(--r-md); background: var(--c-card); overflow: hidden; }
+.stagerow { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--s-3); padding: var(--s-3) var(--s-4); }
+.stagerow + .stagerow { border-top: 1px solid var(--c-line); }
+.stagerow__n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 600 12px var(--font-geist); background: var(--c-idle-bg); color: var(--c-ink-2); }
+.stagerow[data-tone='ok'] .stagerow__n { background: var(--c-ok); color: #fff; }
+.stagerow[data-tone='bad'] .stagerow__n { background: var(--c-bad); color: #fff; }
+.stagerow[data-tone='warn'] .stagerow__n { background: var(--c-warn); color: #fff; }
+.stagerow[data-tone='run'] .stagerow__n { background: var(--c-accent); color: #fff; }
+.stagerow[data-tone='run'] { background: #f5f7ff; }
+.stagerow__main { min-width: 0; }
+
+/* Segmented radio */
+.seg { display: inline-flex; border: 1px solid #94a3b8; border-radius: var(--r-sm); overflow: hidden; align-self: flex-start; max-width: 100%; }
+.seg__opt { position: relative; display: inline-flex; align-items: center; min-height: 40px; padding: 0 var(--s-4); font: 600 13px var(--font-geist); color: var(--c-ink); background: #fff; cursor: pointer; }
+.seg__opt + .seg__opt { border-left: 1px solid #94a3b8; }
+.seg__opt[data-on='true'] { background: #eef2ff; color: var(--c-accent-ink); }
+.seg__opt input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.seg__opt:focus-within { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+
+/* Log viewer */
+.logbox {
+  margin: var(--s-2) 0 0; padding: var(--s-3); max-height: 280px; overflow: auto; background: var(--c-ink); color: #e2e8f0;
+  border-radius: var(--r-sm); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.logbox:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+
+/* Comparison */
+.ctable th[scope='col'], .ctable td { min-width: 150px; }
+.ctable th[scope='row'] { position: sticky; left: 0; background: var(--c-card); min-width: 140px; z-index: 1; }
+.explain-row td { border-bottom: 1px solid var(--c-line); padding-top: 0; }
+.panel details > summary { min-height: 32px; }
+@media (max-width: 599px) {
+  .ctable th[scope='row'] { min-width: 112px; }
+  .toolbar__link { flex: 1 1 auto; justify-content: center; }
+}
+
+.covtable td:last-child { min-width: 240px; }
+.covtable td:nth-child(4) { min-width: 160px; }

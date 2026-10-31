@@ -5,7 +5,10 @@ import { looksBinary, parseQaText } from '../../lib/parsers';
 import { RISK_FOCUS_OPTIONS, labelOf } from '../../lib/explain';
 import { projectHref } from '../../lib/route';
 import { Banner, Field, Tip } from '../../components/flow/ui';
-import type { Project, ProjectDocument, ProjectQaPair } from '../../types/api';
+import { formFromConfig, hasTargetErrors, toTargetConfig, validateTargetForm } from '../../lib/targetConfig';
+import { QaEditor, cleanPairs } from './QaEditor';
+import { TargetConfigPanel } from './TargetConfigPanel';
+import type { Project, ProjectDocument, ProjectQaPair, TargetTestResult } from '../../types/api';
 import { validateEndpoint } from '../ConnectPage';
 
 const DEFAULT_FOCUS = ['hallucination', 'retrieval', 'prompt_injection'];
@@ -21,6 +24,8 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
   const [notes, setNotes] = useState(prev.notes ?? '');
   const [focus, setFocus] = useState<string[]>(prev.risk_focus?.length ? prev.risk_focus : DEFAULT_FOCUS);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [storedNames, setStoredNames] = useState<string[]>(project.secrets_set ?? []);
+  const [targetForm, setTargetForm] = useState(() => formFromConfig(project.target_config));
   const [messages, setMessages] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -29,6 +34,24 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
   const envNames = (project.analysis?.env_vars ?? []).map(labelOf).filter((n) => /^[A-Z][A-Z0-9_]*$/.test(n));
   const endpointError = validateEndpoint(endpoint);
   const staticOnly = project.analysis?.execution_mode === 'static_only' && !endpoint.trim();
+  const targetDirty = JSON.stringify(targetForm) !== JSON.stringify(formFromConfig(project.target_config));
+
+  /** Secrets are write-only and replace the vault as a set: send only what was typed, then forget it. */
+  const flushSecrets = async () => {
+    const filled = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v.trim()));
+    if (Object.keys(filled).length === 0) return;
+    await projectsApi.saveSecrets(project.id, filled);
+    setStoredNames(Object.keys(filled));
+    setSecrets({});
+  };
+
+  const testConnection = async (question: string): Promise<TargetTestResult> => {
+    if (hasTargetErrors(validateTargetForm(targetForm))) throw new Error('Fix the highlighted connection settings first.');
+    await projectsApi.saveInputs(project.id, { endpoint_url: endpoint.trim() });
+    await flushSecrets();
+    await projectsApi.saveTargetConfig(project.id, toTargetConfig(targetForm));
+    return projectsApi.testTarget(project.id, question);
+  };
 
   const addDocs = async (files: FileList | null) => {
     if (!files) return;
@@ -79,17 +102,17 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (endpointError) return;
+    if (hasTargetErrors(validateTargetForm(targetForm))) { setError('Fix the highlighted connection settings before saving.'); return; }
     setBusy(true); setError(null);
     const documents = pasteDoc.trim() ? [...docs, { name: 'pasted.txt', text: pasteDoc }] : docs;
     try {
       await projectsApi.saveInputs(project.id, {
-        documents, qa_pairs: qa, risk_focus: focus,
+        documents, qa_pairs: cleanPairs(qa), risk_focus: focus,
         ...(endpoint.trim() ? { endpoint_url: endpoint.trim() } : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
       });
-      const filled = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v));
-      if (Object.keys(filled).length > 0) await projectsApi.saveSecrets(project.id, filled);
-      setSecrets({});
+      await flushSecrets();
+      if (targetDirty) await projectsApi.saveTargetConfig(project.id, toTargetConfig(targetForm));
       window.location.hash = projectHref(project.id, 'run');
     } catch (err) {
       setError(describeError(err, 'saving inputs'));
@@ -115,7 +138,7 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
 
       <section className="panel stack" aria-labelledby="docs-h">
         <h2 className="h2" id="docs-h" style={{ margin: 0 }}>Knowledge documents <Tip text="The documents your app retrieves from. Used to check that answers are grounded in them." /></h2>
-        <Field label="Upload .txt / .md files" htmlFor="doc-files" hint="PDFs: export to text first. Use non-sensitive or synthetic content.">
+        <Field label="Upload .txt / .md files" htmlFor="doc-files" hint="PDFs: export to text first. Use non-sensitive content.">
           <input id="doc-files" className="input" type="file" multiple accept=".txt,.md,.markdown,text/plain,text/markdown,.pdf" onChange={(e) => void addDocs(e.target.files)} />
         </Field>
         <Field label="Or paste text" htmlFor="doc-paste">
@@ -135,7 +158,7 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
 
       <section className="panel stack" aria-labelledby="qa-h">
         <h2 className="h2" id="qa-h" style={{ margin: 0 }}>Questions and reference answers <Tip text="Real questions your users ask, with the correct answer if you know it. Without any, we can generate questions from your documents." /></h2>
-        <Field label="Upload CSV or JSONL" htmlFor="qa-file" hint='CSV columns: question, reference_answer. JSONL: {"question": "...", "reference_answer": "..."} per line.'>
+        <Field label="Upload CSV or JSONL" htmlFor="qa-file" hint='CSV columns: question, reference_answer, answerable (true / false / blank). JSONL: {"question": "...", "reference_answer": "...", "answerable": true} per line.'>
           <input id="qa-file" className="input" type="file" accept=".csv,.jsonl,.ndjson,text/csv" onChange={(e) => void addQaFile(e.target.files)} />
         </Field>
         <Field label="Or paste CSV / JSONL" htmlFor="qa-paste">
@@ -146,30 +169,18 @@ export const InputsStep: React.FC<{ project: Project }> = ({ project }) => {
           <span className="muted" data-testid="qa-count">{qa.length} question{qa.length === 1 ? '' : 's'} loaded</span>
           {qa.length > 0 && <button type="button" className="fbtn fbtn--ghost fbtn--sm" onClick={() => setQa([])}>Clear</button>}
         </div>
+        <QaEditor pairs={qa} onChange={setQa} />
       </section>
 
-      <section className="panel stack" aria-labelledby="ep-h">
-        <h2 className="h2" id="ep-h" style={{ margin: 0 }}>Running your app</h2>
-        <Field label="Deployed endpoint URL" htmlFor="ep" error={endpointError}
-          tip="Where we send questions. Without it, the run is code analysis only and cannot measure real answers."
-          hint="A staging URL is ideal. Do not point this at production with real users.">
-          <input id="ep" className="input" type="url" inputMode="url" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://staging.example.com/ask" autoComplete="off" />
-        </Field>
-        {staticOnly && <Banner tone="warn"><span>Without an endpoint this run will be <strong>static analysis only</strong>: your code is read but never executed, so no answers are measured.</span></Banner>}
-        {envNames.length > 0 && (
-          <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
-            <legend className="field__label">Secrets your app needs <Tip text="Write-only. Sent once to the server, never shown again and never stored in your browser." /></legend>
-            <span className="field__hint">Optional. Use test keys with low limits.</span>
-            <div className="grid2">
-              {envNames.map((n) => (
-                <Field key={n} label={n} htmlFor={`sec-${n}`}>
-                  <input id={`sec-${n}`} className="input" type="password" autoComplete="new-password" value={secrets[n] ?? ''} onChange={(e) => setSecrets((s) => ({ ...s, [n]: e.target.value }))} />
-                </Field>
-              ))}
-            </div>
-          </fieldset>
-        )}
-      </section>
+      <TargetConfigPanel endpoint={endpoint} onEndpoint={setEndpoint} endpointError={endpointError} staticOnly={staticOnly}
+        form={targetForm} onForm={setTargetForm} secrets={secrets} onSecrets={setSecrets} envNames={envNames} storedNames={storedNames}
+        defaultQuestion={qa[0]?.question ?? ''} onTest={testConnection} />
+
+      {project.analysis?.execution_mode === 'docker' && (
+        <Banner tone="info" role="status">
+          <span>Sandbox network allowlist, port and path overrides are edited under <a href={projectHref(project.id, 'understand')}>Understand, Execution</a>, next to the build and run state.</span>
+        </Banner>
+      )}
 
       <section className="panel stack" aria-labelledby="rf-h">
         <h2 className="h2" id="rf-h" style={{ margin: 0 }}>Risk focus</h2>

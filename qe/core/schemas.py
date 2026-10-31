@@ -184,6 +184,9 @@ class Policy(Frozen):
     # Additive (ADR-0003-p2): both default to "not declared", so existing policies are unchanged.
     conditional_rules: tuple[ConditionalRule, ...] = ()
     min_improvement: dict[str, float] = Field(default_factory=dict)  # metric -> delta
+    # ADR-0009: minimum measured judge agreement (lower CI bound vs human labels) required before
+    # LLM-judge verdicts may gate correctness/faithfulness. None = judge stays advisory.
+    judge_min_agreement: float | None = Field(default=None, gt=0.0, le=1.0)
 
 
 class DecisionRecord(Frozen):
