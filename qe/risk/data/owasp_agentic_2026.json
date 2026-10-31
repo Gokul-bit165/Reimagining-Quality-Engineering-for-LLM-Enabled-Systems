@@ -1,0 +1,9 @@
+{
+ "taxonomy": "owasp_agentic_2026",
+ "title": "OWASP Top 10 for Agentic Applications for 2026",
+ "source_url": "https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/",
+ "fetched": "2026-10-31",
+ "status": "primary_entries_not_fetched",
+ "note": "Landing page shows edition (published 2025-12-09) but not the entries; the PDF was not fetched. No entries are invented. Add entries from the primary document before using.",
+ "entries": []
+}

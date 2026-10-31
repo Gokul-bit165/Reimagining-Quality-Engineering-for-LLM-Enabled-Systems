@@ -1,0 +1,60 @@
+{
+ "taxonomy": "owasp_llm_2025",
+ "title": "OWASP Top 10 for LLM Applications 2025",
+ "source_url": "https://genai.owasp.org/llm-top-10/",
+ "fetched": "2026-10-31",
+ "status": "verified_titles_only",
+ "note": "IDs/titles/URLs copied from the primary index page on the fetch date; entry descriptions were NOT fetched.",
+ "entries": [
+  {
+   "id": "LLM01",
+   "title": "Prompt Injection",
+   "url": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/"
+  },
+  {
+   "id": "LLM02",
+   "title": "Sensitive Information Disclosure",
+   "url": "https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/"
+  },
+  {
+   "id": "LLM03",
+   "title": "Supply Chain",
+   "url": "https://genai.owasp.org/llmrisk/llm032025-supply-chain/"
+  },
+  {
+   "id": "LLM04",
+   "title": "Data and Model Poisoning",
+   "url": "https://genai.owasp.org/llmrisk/llm042025-data-and-model-poisoning/"
+  },
+  {
+   "id": "LLM05",
+   "title": "Improper Output Handling",
+   "url": "https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/"
+  },
+  {
+   "id": "LLM06",
+   "title": "Excessive Agency",
+   "url": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/"
+  },
+  {
+   "id": "LLM07",
+   "title": "System Prompt Leakage",
+   "url": "https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/"
+  },
+  {
+   "id": "LLM08",
+   "title": "Vector and Embedding Weaknesses",
+   "url": "https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/"
+  },
+  {
+   "id": "LLM09",
+   "title": "Misinformation",
+   "url": "https://genai.owasp.org/llmrisk/llm092025-misinformation/"
+  },
+  {
+   "id": "LLM10",
+   "title": "Unbounded Consumption",
+   "url": "https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/"
+  }
+ ]
+}
