@@ -99,8 +99,8 @@ function decisionSection(run) {
   }[d.decision];
   frag.append(el("p", { class: "lede" }, lede));
   if (run.pack.policy.example_only) {
-    frag.append(el("p", { class: "notice" },
-      "Example policy: its appetites are illustrative and are not a recommendation."));
+    frag.append(el("p", { class: "notice" }, el("strong", {}, "Example policy. "),
+      "Its appetites are illustrative and are not a recommendation."));
   }
   const conditions = (d.conditions ?? []).filter((c) => !c.startsWith("EXAMPLE policy"));
   if (conditions.length) {

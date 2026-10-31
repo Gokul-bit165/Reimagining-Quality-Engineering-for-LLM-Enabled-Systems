@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "qe/ui/static/index.html"
+        ],
+        "createdAt": "2026-10-31T06:38:55.929Z",
+        "reason": "assistant decided, not user confirmed: paper/ledger palette is the documented direction in docs/UI_DESIGN.md (audit-report metaphor); revisit if the team changes direction"
+      }
+    ]
+  }
+}
