@@ -1,6 +1,7 @@
 // qe evidence UI: scenario form, run list, hash routing. No build step.
 import { $, STATE, api, el } from "./lib.js";
 import { renderReport } from "./report.js";
+import { showBench, showBenchForm, stopPolling } from "./bench.js";
 
 const EXAMPLES = {
   rag: ["LLM09", "Customers receive wrong or invented shipping and returns policy facts"],
@@ -10,6 +11,7 @@ let runs = [];
 let taxonomy = { entries: [], apps: [] };
 let lastFailures = [];
 let config = { real_available: false };
+let benches = [];
 
 const sidOf = (id) => id.split("-")[1];
 const variantOf = (id) => id.slice(id.lastIndexOf("-") + 1);
@@ -33,6 +35,16 @@ function renderRail(active) {
   }
   if (!seeded.length) list.append(el("li", { class: "empty rail-empty" }, "No scenarios yet."));
   $("new-btn").setAttribute("aria-current", String(active === "new"));
+  $("bench-btn").setAttribute("aria-current", String(active === "bench"));
+  const bl = $("bench-list");
+  bl.replaceChildren();
+  benches.forEach((b) => {
+    const btn = el("button", { type: "button", "aria-current": String(active === b.id) },
+      el("span", { class: "run-name" }, b.id.slice(6)),
+      el("span", { class: "run-meta" }, `${b.state} · ${b.models.length} model(s)`));
+    btn.addEventListener("click", () => { location.hash = b.id; });
+    bl.append(el("li", {}, btn));
+  });
 }
 
 function variantToggle(id) {
@@ -105,16 +117,23 @@ function showForm() {
 
 async function load() {
   try {
-    [runs, taxonomy, config] = await Promise.all([api("/api/runs"),
-      taxonomy.entries.length ? taxonomy : api("/api/taxonomy"), api("/api/config")]);
+    [runs, taxonomy, config, benches] = await Promise.all([api("/api/runs"),
+      taxonomy.entries.length ? taxonomy : api("/api/taxonomy"), api("/api/config"), api("/api/benchmarks")]);
   } catch (e) { $("main").replaceChildren(el("p", { class: "error" }, `Could not load: ${e.message}`)); return; }
   const id = route();
+  stopPolling();
+  if (id === "bench" || /^bench-[a-z0-9]{8}$/.test(id)) {
+    renderRail(id);
+    if (id === "bench") await showBenchForm($("main")); else await showBench($("main"), id);
+    return;
+  }
   const known = runs.some((r) => r.id === id);
   renderRail(known ? id : "new");
   if (known) await showReport(id); else showForm();
 }
 
 $("new-btn").addEventListener("click", () => { location.hash = "new"; load(); });
+$("bench-btn").addEventListener("click", () => { location.hash = "bench"; load(); });
 $("run-select").addEventListener("change", (e) => { location.hash = e.target.value; });
 window.addEventListener("hashchange", load);
 load();

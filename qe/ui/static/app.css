@@ -137,3 +137,13 @@ pre.plan { white-space: pre-wrap; font: var(--text-sm)/1.5 var(--font-mono); bac
 .btn, .seg { min-height: 2.5rem; }
 
 .tbl code { white-space: nowrap; }
+
+/* Model benchmark */
+.mini { display: block; width: 100%; max-width: 14rem; height: 1.25rem; margin-top: var(--space-1); }
+.mini .axis { stroke: var(--rule); } .mini .range { fill: var(--bar-fill); } .mini .point { fill: var(--ink); }
+progress { width: 100%; height: 0.75rem; accent-color: var(--ink); margin: var(--space-2) 0; }
+fieldset { border: 1px solid var(--rule); border-radius: var(--radius); padding: var(--space-3) var(--space-4); margin: 0; }
+legend { font-weight: 600; font-size: var(--text-sm); padding: 0 var(--space-2); }
+fieldset .check { margin-top: var(--space-2); }
+.model { border-top: 1px solid var(--rule); padding: var(--space-4) 0; }
+.model h3 { font-size: var(--text-md); display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }

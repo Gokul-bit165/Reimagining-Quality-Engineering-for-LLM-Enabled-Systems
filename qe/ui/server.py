@@ -27,6 +27,9 @@ from qe.demo.pipeline import APP_METRICS, TAXONOMY, run_scenario_variant
 from qe.demo.run_demo import run_demo
 from qe.demo.scenario_report import build_report
 from qe.llm.real import RealLLMNotAllowedError, RealRuntime, runtime_from_env
+from qe.modelbench import jobs as bench_jobs
+from qe.modelbench.models import SIM_PROFILES
+from qe.modelbench.report import build_bench_report
 from qe.report.evidence_pack import render_json, render_markdown
 from qe.report.viewer import build_view
 from qe.risk.taxonomy import load_taxonomy
@@ -112,6 +115,56 @@ class SignoffRequest(BaseModel):
     approver: str = Field(min_length=1, max_length=80)
     approved: bool
     note: str = Field(default="", max_length=500)
+
+
+class BenchRequest(BaseModel):
+    models: list[str] = Field(min_length=1, max_length=bench_jobs.MAX_MODELS)
+    focus: str = Field(default="", max_length=300)
+    n_tests: int = Field(default=10, ge=5, le=20)
+    repeats: int = Field(default=2, ge=1, le=3)
+
+
+@app.get("/api/benchmarks/models")
+def bench_models() -> dict[str, Any]:
+    cfg = config()
+    suggested = [m for m in (cfg.get("tester_model"), cfg.get("target_model")) if m]
+    return {"simulated": [{"id": k, "description": v} for k, v in SIM_PROFILES.items()],
+            "real_available": cfg["real_available"], "reason": cfg.get("reason"),
+            "suggested_real": suggested}
+
+
+@app.post("/api/benchmarks")
+def start_benchmark(req: BenchRequest) -> dict[str, Any]:
+    try:
+        return bench_jobs.start(runs_dir(), req.models, req.focus, req.n_tests, req.repeats)
+    except bench_jobs.BenchRequestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@app.get("/api/benchmarks")
+def list_benchmarks() -> list[dict[str, Any]]:
+    base = runs_dir()
+    found = [bench_jobs.read_status(base, p.name.removesuffix(".status.json"))
+             for p in sorted(base.glob("bench-*.status.json"))] if base.exists() else []
+    return [s for s in found if s]
+
+
+@app.get("/api/benchmarks/{bench_id}")
+def get_benchmark(bench_id: str) -> dict[str, Any]:
+    if not bench_jobs.BENCH_ID.match(bench_id):
+        raise HTTPException(status_code=400, detail="invalid benchmark id")
+    status = bench_jobs.read_status(runs_dir(), bench_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="benchmark not found")
+    path = runs_dir() / f"{bench_id}.sqlite"
+    report = None
+    if path.exists() and status["state"] != "error":
+        ledger = SQLiteLedger(path)
+        try:
+            report = build_bench_report(ledger)
+        finally:
+            ledger.close()
+    return {"status": status, "report": report}
 
 
 @app.get("/api/taxonomy")

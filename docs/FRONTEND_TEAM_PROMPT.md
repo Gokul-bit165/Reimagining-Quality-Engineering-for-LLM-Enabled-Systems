@@ -26,6 +26,27 @@ Vite + React 18 + TypeScript (strict), React Router (hash or browser routes), Ta
 - `POST /api/runs/{id}/signoff` body `{ approver (1..80), approved: boolean, note (<=500) }` -> `{ recorded, decision }`. Human-only; re-fetch the report afterwards.
 - `GET  /api/monitoring-plan` -> `{ markdown }`.
 
+## Model benchmark API (compare any models on the same generated suite)
+- `GET  /api/benchmarks/models` -> `{ simulated: {id, description}[], real_available: boolean, reason?: string, suggested_real: string[] }`. Simulated ids are `sim:faithful`, `sim:hallucinator`, `sim:injectable` (deterministic reference stand-ins, always label them "simulated reference"). Real ids are any OpenRouter model id.
+- `POST /api/benchmarks` body `{ models: string[] (1..4, distinct), focus: string (<=300, optional), n_tests: 5..20 (default 10), repeats: 1..3 (default 2) }` -> status `{ id: "bench-xxxxxxxx", state: "running"|"done"|"error", done, total, note, error, models, started }`. Returns at once; the job runs in the background. 400 for invalid ids, real models when real mode is off, or paid models without an owner budget.
+- `GET  /api/benchmarks` -> status[] of all benchmarks.
+- `GET  /api/benchmarks/{id}` -> `{ status, report | null }`. Poll every 2 s while `state === "running"` (real models can take minutes: calls are paced about 3 s apart and free tiers rate limit). `report` is present once data exists.
+```ts
+type BenchCell = { failed:number; passed:number; not_evaluable:number; rate?:Rate;
+  examples:{test_id:string; style:string|null; question:string|null; expected:string|null; output:string; detail:string|null}[] };
+type BenchReport = {
+  benchmark:{ models:string[]; focus:string; n_tests:number; repeats:number; pace_s:number; suite_generator:string;
+    suite:{ n:number; styles:Record<string,number>; sources:string[] } };
+  models:Record<string,{ simulated:boolean; metrics:Record<"faithfulness"|"answer_accuracy"|"abstention"|"injection_resistance"|"consistency", BenchCell>;
+    runs:{ total:number; errors:number; error_kinds:string[] } }>;
+  comparison:{ metric:string; meaning:string; cells:Record<string, Rate|null>; separable:string[] }[];
+  tests:{ test_id:string; style:string; question:string; expected:string; source_id:string; canary:string|null }[];
+  ledger:{ entries:number; head:string; verified:boolean };
+  notes:string[];
+};
+```
+A failure is a failed test. A call that errored (for example HTTP 429) is **missing evidence**: show `runs.errors` and `error_kinds` prominently and never count them as failures.
+
 ## Report shape (TypeScript, write these types first and validate responses with zod)
 ```ts
 type Rate = { k:number; n:number; point:number; lower:number; upper:number; confidence:number; method:string };
@@ -68,6 +89,11 @@ Target application endpoint URL and auth, their own policy file (appetites, loss
 1. New scenario: the form above, an honest "what will happen" paragraph, a visible SIMULATED / REAL label.
 2. Report with a sticky section nav and these sections in order: Decision hero; Application and scenario; Risk register; Dynamic test generation; Test execution; Grounding and hallucination; Adversarial security; Failure taxonomy; Scorecard; Regression suite; Release recommendation; Evidence pack (downloads + hash chain status); Human approval; Monitoring plan.
 3. Seeded/clean toggle at the top of a report (sibling run id = same prefix + variant).
+4. **Model benchmark** (own nav entry and routes `#bench`, `#bench-<id>`):
+   - Form: checkboxes for the simulated reference models (labelled), a text input for real OpenRouter ids (disabled with the `reason` when `real_available` is false), optional focus text, suite size, repeats, and an honest note that free tiers are rate limited and each model makes tests x repeats calls.
+   - Running view: a progress bar from `done/total` plus `note`, polling every 2 s, with a clear error state.
+   - Results dashboard: a metric-by-model comparison table where each cell shows `failed / evaluable` and the interval as text plus a small interval bar; a "What can be concluded" block listing `separable` statements, or "no pair of models is separable at this sample size" (say it is a limit of the evidence, not a tie); per-model sections with run/error counts and failing examples (question, what the model said, detail); the ledger status and the `notes` block.
+   - Rules: never rank models or compute an overall score; claim a difference only from `separable`; label simulated vs real on every model.
 Empty, loading and error states for every screen. Responsive from 360px; tables scroll inside their own container, never the page.
 
 # NON-NEGOTIABLE PRODUCT RULES (these are the product, not polish)
@@ -81,6 +107,9 @@ Empty, loading and error states for every screen. Responsive from 360px; tables 
 
 # QUALITY BAR
 WCAG AA (contrast, focus rings, keyboard, labels, `role=status` for async messages), `prefers-reduced-motion`, no layout shift. Use the design tokens and the direction in `docs/UI_DESIGN.md` (audit-ledger feel, serif for the decision, no gradients/glass/card grids). Tests: Vitest + React Testing Library for the interval bar, the decision states, form validation and the sign-off flow; one Playwright test that runs a simulated scenario end to end against a local backend. Typecheck, lint and build must pass. Take real screenshots at 390px and 1440px of: new-scenario form, report top, security section, human approval.
+
+# BENCHMARK DASHBOARD QUALITY BAR
+Keep the table readable at 390px (scroll inside its own container, sticky first column). Interval bars share one 0 to 100% axis so models are visually comparable. Do not animate bars. Keep polling cheap and stop it when the view unmounts.
 
 # DELIVERABLES
 `frontend/` app, `frontend/README.md` (how to run against the backend), `frontend/API_REQUESTS.md`, screenshots in `frontend/screenshots/`. Stop and report: what is built, test and build output, what is not done.
