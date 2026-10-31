@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from qe.core.events import Event, EventType, ProducerKind
+from qe.core.ledger import Ledger
 from qe.core.schemas import AccessProfile, Span, VisibilityLevel
 from qe.ports import TargetRequest, TargetResponse
 
@@ -48,10 +50,17 @@ class BlackBoxHttpTarget:
                               spans=spans, meta=dict(raw.get("meta") or {}))
 
 
-async def negotiate(base_url: str, target_name: str = "target") -> AccessProfile:
+_ORDER = list(VisibilityLevel)
+
+
+async def negotiate(base_url: str, target_name: str = "target",
+                    declared: VisibilityLevel | None = None) -> AccessProfile:
     """Probe what is observable. A = output only; B = the app returns trace events on request.
 
     Only what was actually observed is recorded; nothing is inferred (research/14).
+    Levels C-E (OTel, repo, gateway) cannot be observed over this HTTP contract, so they
+    are accepted only as `declared` by the operator and flagged `declared_level_unverified`.
+    A declared level below the observed one is ignored (observation wins).
     """
     base = base_url.rstrip("/")
     caps: list[str] = []
@@ -70,4 +79,17 @@ async def negotiate(base_url: str, target_name: str = "target") -> AccessProfile
         level = VisibilityLevel.B_SDK
     if probe.get("citations") is not None:
         caps.append("citations")
+    if declared is not None and _ORDER.index(declared) > _ORDER.index(level):
+        level = declared
+        caps.append("declared_level_unverified")
     return AccessProfile(target=target_name, visibility_level=level, capabilities=tuple(caps))
+
+
+def record_access_profile(ledger: Ledger, profile: AccessProfile) -> None:
+    """Write the negotiated profile to the ledger (idempotent per target+level+capabilities)."""
+    payload = profile.model_dump(mode="json")
+    key = f"access:{profile.target}:{profile.visibility_level.value}"
+    if ledger.find_by_key(key) is not None:
+        return
+    ledger.append(Event(key=key, type=EventType.CAPABILITY_INVENTORY, producer="access",
+                        producer_kind=ProducerKind.DETERMINISTIC, payload=payload))
