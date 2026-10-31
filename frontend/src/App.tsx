@@ -1,166 +1,97 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import type { RunSummary, Taxonomy, Config, BenchStatus, Report } from './types/api';
+import React, { useCallback, useEffect, useState } from 'react';
+import type { BenchStatus, Config, Report, RunSummary, Taxonomy, Project } from './types/api';
 import { api } from './api';
-import { Sidebar } from './components/stitch/Sidebar';
+import { projectsApi } from './lib/projects';
+import { parseRoute, type Route } from './lib/route';
+import { Nav } from './components/flow/Nav';
 import { TopBar } from './components/stitch/TopBar';
+import { ConnectPage } from './pages/ConnectPage';
+import { ProjectPage } from './pages/ProjectPage';
 import { NewScenario } from './pages/NewScenario';
 import { ReportView } from './pages/ReportView';
 import { BenchForm } from './pages/BenchForm';
 import { BenchView } from './pages/BenchView';
 import { LLMTestingStudio } from './pages/LLMTestingStudio';
 
-export const App: React.FC = () => {
+/** Demo/benchmark data. Loaded lazily and optionally: failures never block the main flow. */
+function useLegacyData() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [taxonomy, setTaxonomy] = useState<Taxonomy>({ name: '', status: '', apps: [], entries: [] });
   const [config, setConfig] = useState<Config>({ real_available: false });
   const [benches, setBenches] = useState<BenchStatus[]>([]);
-  const [lastFailures, setLastFailures] = useState<string[]>([]);
-  const [route, setRoute] = useState<string>('new');
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Active report reference for TopBar
-  const [currentReport, setCurrentReport] = useState<Report | null>(null);
-
-  const getHash = () => decodeURIComponent(window.location.hash.slice(1)) || 'new';
-
-  const refreshAll = useCallback(async () => {
-    try {
-      const [runsData, taxData, configData, benchData] = await Promise.all([
-        api<RunSummary[]>('/api/runs'),
-        api<Taxonomy>('/api/taxonomy'),
-        api<Config>('/api/config'),
-        api<BenchStatus[]>('/api/benchmarks'),
-      ]);
-      setRuns(runsData);
-      setTaxonomy(taxData);
-      setConfig(configData);
-      setBenches(benchData);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const refresh = useCallback(async () => {
+    const [r, t, c, b] = await Promise.allSettled([
+      api<RunSummary[]>('/api/runs'), api<Taxonomy>('/api/taxonomy'), api<Config>('/api/config'), api<BenchStatus[]>('/api/benchmarks'),
+    ]);
+    if (r.status === 'fulfilled') setRuns(r.value);
+    if (t.status === 'fulfilled') setTaxonomy(t.value);
+    if (c.status === 'fulfilled') setConfig(c.value);
+    if (b.status === 'fulfilled') setBenches(b.value);
   }, []);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return { runs, taxonomy, config, benches, refresh };
+}
+
+export const App: React.FC = () => {
+  const [route, setRoute] = useState<Route>(() => parseRoute(window.location.hash));
+  const [navOpen, setNavOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [currentReport, setCurrentReport] = useState<Report | null>(null);
+  const [lastFailures, setLastFailures] = useState<string[]>([]);
+  const legacy = useLegacyData();
 
   useEffect(() => {
-    refreshAll();
+    const onHash = () => setRoute(parseRoute(window.location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
-    const handleHash = () => {
-      const h = getHash();
-      setRoute(h);
-      if (h !== 'new' && h !== 'bench' && h !== 'test-llm' && !h.startsWith('bench-')) {
-        api<Report>(`/api/runs/${encodeURIComponent(h)}/report`)
-          .then(setCurrentReport)
-          .catch(() => setCurrentReport(null));
-      } else {
-        setCurrentReport(null);
-      }
-    };
+  useEffect(() => { projectsApi.list().then(setProjects).catch(() => setProjects([])); }, [route]);
 
-    window.addEventListener('hashchange', handleHash);
-    handleHash();
+  const legacyId = route.name === 'legacy' ? route.id : '';
+  const isReport = Boolean(legacyId) && !['new', 'bench', 'test-llm'].includes(legacyId) && !legacyId.startsWith('bench-');
 
-    return () => window.removeEventListener('hashchange', handleHash);
-  }, [refreshAll]);
+  useEffect(() => {
+    if (!isReport) { setCurrentReport(null); return; }
+    api<Report>(`/api/runs/${encodeURIComponent(legacyId)}/report`).then(setCurrentReport).catch(() => setCurrentReport(null));
+  }, [isReport, legacyId]);
 
-  const handleNavigate = (newRoute: string) => {
-    window.location.hash = newRoute;
-  };
-
-  const handleScenarioCreated = async (seededRunId: string) => {
-    try {
-      const updatedRuns = await api<RunSummary[]>('/api/runs');
-      setRuns(updatedRuns);
-    } catch { /* ignore */ }
-    window.location.hash = seededRunId;
-  };
-
-  const handleBenchmarkStarted = async (benchId: string) => {
-    try {
-      const updatedBenches = await api<BenchStatus[]>('/api/benchmarks');
-      setBenches(updatedBenches);
-    } catch { /* ignore */ }
-    window.location.hash = benchId;
-  };
-
-  if (loading) {
-    return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
-        <p className="empty">Loading verification platform…</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e11d48' }}>
-        <p className="error">{`Could not load: ${error}`}</p>
-      </div>
-    );
-  }
-
-  const isReportRoute = route !== 'new' && route !== 'bench' && route !== 'test-llm' && !route.startsWith('bench-');
+  const navigate = (r: string) => { window.location.hash = r; };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden' }}>
-      {/* Stitch Sidebar */}
-      <Sidebar
-        activeRoute={route}
-        runs={runs}
-        benches={benches}
-        onNavigate={handleNavigate}
-      />
+    <div className="shell">
+      <header className="mobilebar">
+        <strong style={{ fontFamily: 'var(--font-geist)', color: 'var(--c-accent-ink)' }}>qe FlowOps</strong>
+        <button type="button" className="fbtn fbtn--ghost fbtn--sm" aria-expanded={navOpen} aria-controls="primary-nav" onClick={() => setNavOpen(!navOpen)}>
+          <span className="material-symbols-outlined" aria-hidden="true">menu</span>Menu
+        </button>
+      </header>
+      <Nav route={route} open={navOpen} projects={projects} runs={legacy.runs} benches={legacy.benches} onClose={() => setNavOpen(false)} />
 
-      {/* Main Container */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-        {/* Stitch TopBar */}
-        <TopBar
-          report={currentReport}
-          currentRunId={isReportRoute ? route : undefined}
-          onNavigate={handleNavigate}
-        />
-
-        {/* Viewport Content */}
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {route === 'new' && (
-            <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', padding: '32px 48px', maxWidth: '56rem' }}>
-              <NewScenario
-                taxonomy={taxonomy}
-                config={config}
-                lastFailures={lastFailures}
-                onScenarioCreated={handleScenarioCreated}
-              />
+      <main className="shell__main">
+        {route.name === 'legacy' && <TopBar report={currentReport} currentRunId={isReport ? legacyId : legacyId} onNavigate={navigate} />}
+        <div className="shell__scroll custom-scroll">
+          {route.name === 'connect' && <ConnectPage />}
+          {route.name === 'project' && <ProjectPage key={route.projectId} projectId={route.projectId} step={route.step} evalId={route.evalId} />}
+          {route.name === 'notfound' && (
+            <div className="page"><div className="fempty">That page does not exist. <a href="#connect">Go to Connect your RAG app</a>.</div></div>
+          )}
+          {legacyId === 'new' && (
+            <div style={{ padding: '24px', maxWidth: '56rem' }}>
+              <NewScenario taxonomy={legacy.taxonomy} config={legacy.config} lastFailures={lastFailures}
+                onScenarioCreated={async (id) => { await legacy.refresh(); navigate(id); }} />
             </div>
           )}
-
-          {route === 'bench' && (
-            <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', padding: '32px 48px', maxWidth: '56rem' }}>
-              <BenchForm onBenchmarkStarted={handleBenchmarkStarted} />
+          {legacyId === 'bench' && (
+            <div style={{ padding: '24px', maxWidth: '56rem' }}>
+              <BenchForm onBenchmarkStarted={async (id) => { await legacy.refresh(); navigate(id); }} />
             </div>
           )}
-
-          {route === 'test-llm' && (
-            <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto' }}>
-              <LLMTestingStudio />
-            </div>
-          )}
-
-          {route.startsWith('bench-') && (
-            <div className="custom-scroll" style={{ flex: 1, overflowY: 'auto', padding: '32px 48px', maxWidth: '64rem' }}>
-              <BenchView benchId={route} />
-            </div>
-          )}
-
-          {isReportRoute && (
-            <ReportView
-              runId={route}
-              onNavigate={handleNavigate}
-              onFailuresLoaded={setLastFailures}
-            />
-          )}
+          {legacyId === 'test-llm' && <LLMTestingStudio />}
+          {legacyId.startsWith('bench-') && <div style={{ padding: '24px', maxWidth: '64rem' }}><BenchView benchId={legacyId} /></div>}
+          {isReport && <div style={{ height: 'calc(100dvh - 130px)' }}><ReportView runId={legacyId} onNavigate={navigate} onFailuresLoaded={setLastFailures} /></div>}
         </div>
-      </div>
+      </main>
     </div>
   );
 };

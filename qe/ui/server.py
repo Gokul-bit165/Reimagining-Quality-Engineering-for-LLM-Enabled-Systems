@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -33,11 +34,15 @@ from qe.modelbench.report import build_bench_report
 from qe.report.evidence_pack import render_json, render_markdown
 from qe.report.viewer import build_view
 from qe.risk.taxonomy import load_taxonomy
+from qe.ui.routes_eval import router as eval_router
+from qe.ui.routes_projects import router as projects_router
+from qe.ui.security import install as install_security
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC = Path(__file__).parent / "static"
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 load_dotenv(ROOT / ".env")  # allow-listed names only; values are never printed
+_SCENARIO_SLOTS = threading.BoundedSemaphore(2)  # cap concurrent pipeline runs
 
 
 def runs_dir() -> Path:
@@ -72,6 +77,9 @@ def _summary(run_id: str) -> dict[str, Any]:
 
 
 app = FastAPI(title="qe evidence UI", docs_url="/api/docs", openapi_url="/api/openapi.json")
+app.include_router(projects_router)
+install_security(app)
+app.include_router(eval_router)
 
 
 @app.get("/api/runs")
@@ -107,7 +115,8 @@ class ScenarioRequest(BaseModel):
     taxonomy_id: str = Field(pattern=r"^LLM\d{2}$")
     scenario: str = Field(min_length=3, max_length=500)
     budget: int = Field(default=12, ge=1, le=40)
-    previous_failures: list[str] = Field(default_factory=list, max_length=10)
+    previous_failures: list[Annotated[str, Field(max_length=200)]] = Field(
+        default_factory=list, max_length=10)
     mode: Literal["simulated", "real"] = "simulated"
 
 
@@ -202,10 +211,22 @@ def run_scenario(req: ScenarioRequest) -> dict[str, Any]:
     sid = content_id([req.app, req.taxonomy_id, req.scenario, sorted(req.previous_failures),
                       req.budget, req.mode])[:8]
     ids = [f"scn-{sid}-{req.app}-{v}" for v in ("clean", "seeded")]
-    for run_id, variant in zip(ids, ("clean", "seeded"), strict=True):
-        asyncio.run(run_scenario_variant(
-            runs_dir(), run_id, req.app, variant, req.taxonomy_id, req.scenario,
-            req.previous_failures, req.budget, real))
+    if not _SCENARIO_SLOTS.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="too many scenario runs in progress; retry")
+    try:
+        for run_id, variant in zip(ids, ("clean", "seeded"), strict=True):
+            asyncio.run(run_scenario_variant(
+                runs_dir(), run_id, req.app, variant, req.taxonomy_id, req.scenario,
+                req.previous_failures, req.budget, real))
+    except RuntimeError as exc:
+        rate_limited = "429" in str(exc)
+        hint = ("Provider rate limit reached. " if rate_limited else "Model call failed. ")
+        raise HTTPException(
+            status_code=429 if rate_limited else 502,
+            detail=hint + "Switch Mode to 'Simulated (offline, deterministic)' to continue.",
+        ) from None
+    finally:
+        _SCENARIO_SLOTS.release()
     return {"scenario_id": sid, "runs": ids}
 
 
@@ -257,9 +278,20 @@ def monitoring_plan() -> dict[str, str]:
     return {"markdown": path.read_text("utf-8") if path.exists() else "Monitoring plan missing."}
 
 
+FRONTEND_DIST = Path(os.environ.get("QE_FRONTEND_DIST", ROOT / "frontend" / "dist"))
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    built = FRONTEND_DIST / "index.html"  # the React app when it has been built, else the legacy UI
+    return FileResponse(built if built.is_file() else STATIC / "index.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+if (FRONTEND_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")

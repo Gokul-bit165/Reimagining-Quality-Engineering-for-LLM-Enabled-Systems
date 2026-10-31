@@ -51,6 +51,7 @@ export const BenchView: React.FC<BenchViewProps> = ({ benchId }) => {
         clearTimeout(pollTimerRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [benchId]);
 
   if (error) {
@@ -115,7 +116,6 @@ export const BenchView: React.FC<BenchViewProps> = ({ benchId }) => {
 
   const modelNames = Object.keys(report.models);
   const totalCalls = Object.values(report.models).reduce((acc, m) => acc + m.runs.total, 0);
-  const totalErrors = Object.values(report.models).reduce((acc, m) => acc + m.runs.errors, 0);
   const separableCount = report.comparison.reduce((acc, c) => acc + c.separable.length, 0);
   const isSeparable = separableCount > 0;
 

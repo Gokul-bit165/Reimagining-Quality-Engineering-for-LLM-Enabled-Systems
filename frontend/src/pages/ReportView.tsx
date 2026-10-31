@@ -12,14 +12,6 @@ import { Facts } from '../components/Facts';
 import { pct } from '../components/IntervalBar';
 import { exportToExcel, exportToWordDoc } from '../utils/reportExporter';
 
-const ACCESS: Record<string, string> = {
-  A: 'black-box',
-  B: 'SDK / trace in response',
-  C: 'OpenTelemetry traces',
-  D: 'repository',
-  E: 'gateway',
-};
-
 const SURFACE: Record<string, string> = {
   direct_injection: 'direct injection',
   indirect_injection: 'indirect injection',
@@ -34,7 +26,7 @@ interface ReportViewProps {
   onFailuresLoaded: (sourceIds: string[]) => void;
 }
 
-export const ReportView: React.FC<ReportViewProps> = ({ runId, onNavigate, onFailuresLoaded }) => {
+export const ReportView: React.FC<ReportViewProps> = ({ runId, onFailuresLoaded }) => {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +67,7 @@ export const ReportView: React.FC<ReportViewProps> = ({ runId, onNavigate, onFai
 
   useEffect(() => {
     loadReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
   useEffect(() => {
@@ -100,7 +93,6 @@ export const ReportView: React.FC<ReportViewProps> = ({ runId, onNavigate, onFai
   }
 
   const d = report.decision;
-  const isReal = report.labels.mode === 'real';
 
   const handleSignoff = async (approved: boolean) => {
     if (!approver.trim()) {
@@ -201,6 +193,7 @@ export const ReportView: React.FC<ReportViewProps> = ({ runId, onNavigate, onFai
             >
               <WorkflowCanvas
                 report={report}
+                runId={runId}
                 selectedStage={selectedStage}
                 onSelectStage={setSelectedStage}
               />

@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,10 @@ from qe.modelbench.runner import DEFAULT_PACE_S, run_benchmark
 
 BENCH_ID = re.compile(r"^bench-[a-z0-9]{8}$")
 MAX_MODELS = 4
+MAX_CONCURRENT = 2
 _LOCK = threading.Lock()
+IO_RETRIES = 20
+IO_RETRY_DELAY_S = 0.01
 _RUNNING: set[str] = set()
 
 
@@ -57,11 +61,23 @@ def _status_path(runs: Path, bid: str) -> Path:
     return runs / f"{bid}.status.json"
 
 
+def _retry_io[T](op: Callable[[], T]) -> T:
+    """Windows refuses to rename over / read a file another thread has open; retry briefly."""
+    for attempt in range(IO_RETRIES):
+        try:
+            return op()
+        except PermissionError:
+            if attempt == IO_RETRIES - 1:
+                raise
+            time.sleep(IO_RETRY_DELAY_S)
+    raise AssertionError("unreachable")
+
+
 def read_status(runs: Path, bid: str) -> dict[str, Any] | None:
     path = _status_path(runs, bid)
     if not path.is_file():
         return None
-    data: dict[str, Any] = json.loads(path.read_text("utf-8"))
+    data: dict[str, Any] = _retry_io(lambda: json.loads(path.read_text("utf-8")))
     if data["state"] == "running" and bid not in _RUNNING:
         data = {**data, "state": "error", "error": "interrupted (server restarted)"}
     return data
@@ -70,7 +86,7 @@ def read_status(runs: Path, bid: str) -> dict[str, Any] | None:
 def _write(runs: Path, bid: str, data: dict[str, Any]) -> None:
     tmp = _status_path(runs, bid).with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
-    tmp.replace(_status_path(runs, bid))
+    _retry_io(lambda: tmp.replace(_status_path(runs, bid)))
 
 
 def start(runs: Path, models: list[str], focus: str, n_tests: int, repeats: int) -> dict[str, Any]:
@@ -79,13 +95,22 @@ def start(runs: Path, models: list[str], focus: str, n_tests: int, repeats: int)
     with _LOCK:
         if bid in _RUNNING:
             return read_status(runs, bid) or {}
+        if len(_RUNNING) >= MAX_CONCURRENT:
+            raise BenchRequestError(
+                f"too many benchmarks running (max {MAX_CONCURRENT}); wait for one to finish")
         _RUNNING.add(bid)
-    runs.mkdir(parents=True, exist_ok=True)
-    real: RealRuntime | None = (
-        runtime_from_env(runs) if any(not is_simulated(m) for m in models) else None)
-    status = {"id": bid, "state": "running", "done": 0, "total": len(models) * n_tests * repeats,
-              "note": "starting", "error": None, "models": models, "started": time.time()}
-    _write(runs, bid, status)
+    try:
+        runs.mkdir(parents=True, exist_ok=True)
+        real: RealRuntime | None = (
+            runtime_from_env(runs) if any(not is_simulated(m) for m in models) else None)
+        status = {"id": bid, "state": "running", "done": 0,
+                  "total": len(models) * n_tests * repeats, "note": "starting", "error": None,
+                  "models": models, "started": time.time()}
+        _write(runs, bid, status)
+    except BaseException:
+        with _LOCK:  # setup failed: do not leave the id marked running forever
+            _RUNNING.discard(bid)
+        raise
 
     def progress(done: int, total: int, note: str) -> None:
         _write(runs, bid, {**status, "done": done, "total": total, "note": note})

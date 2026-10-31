@@ -290,3 +290,170 @@ export interface BenchModels {
   suggested_real: string[];
 }
 
+
+/* ══════════════════════════════════════════════════════════════
+   "Connect your RAG app" flow: projects + evaluations
+   Contract: qe/ui/routes_projects.py and qe/ui/routes_eval.py
+   ══════════════════════════════════════════════════════════════ */
+
+export type ProjectState = 'cloning' | 'analyzing' | 'ready' | 'failed';
+export type ExecutionMode = 'endpoint' | 'docker' | 'static_only';
+
+export interface RiskFlag {
+  id: string;
+  title: string;
+  evidence_file: string | null;
+  line: number | null;
+}
+
+/** Some detectors emit plain strings, others {name|path|file, line, text}. */
+export type DetectedItem = string | { [key: string]: unknown };
+
+export interface ProjectAnalysis {
+  framework: string | null;
+  language: string | null;
+  entrypoints: DetectedItem[];
+  retriever: DetectedItem | null;
+  vector_store: DetectedItem | null;
+  llm_providers: DetectedItem[];
+  prompts: DetectedItem[];
+  doc_sources: DetectedItem[];
+  env_vars: DetectedItem[];
+  chunking: DetectedItem | null;
+  risk_flags: RiskFlag[];
+  execution_mode: ExecutionMode;
+  /** Plain-language summary written by the analyser. */
+  summary?: string | null;
+  next_steps?: string[];
+  notes?: string[];
+  executed?: boolean;
+}
+
+export interface ProjectDocument { name: string; text: string }
+export interface ProjectQaPair { question: string; reference_answer?: string }
+
+export interface ProjectInputs {
+  documents?: ProjectDocument[];
+  qa_pairs?: ProjectQaPair[];
+  endpoint_url?: string | null;
+  notes?: string | null;
+  risk_focus?: string[];
+}
+
+export interface Project {
+  id: string;
+  repo_url: string;
+  branch: string | null;
+  subdir?: string | null;
+  endpoint_url?: string | null;
+  authorized?: boolean;
+  state: ProjectState;
+  error: string | null;
+  created_at: string | number;
+  analysis: ProjectAnalysis | null;
+  inputs: ProjectInputs;
+}
+
+export interface CreateProjectBody {
+  repo_url: string;
+  branch?: string;
+  subdir?: string;
+  endpoint_url?: string;
+  /** Attestation: the user owns / may test this app. Required by the backend. */
+  authorized: boolean;
+}
+
+export interface SuggestedInputs {
+  documents?: ProjectDocument[];
+  qa_pairs?: ProjectQaPair[];
+  risk_focus?: string[];
+  notes?: string | null;
+  endpoint_url?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SignoffBody { reviewer: string; decision: 'approve' | 'reject'; rationale: string }
+
+export interface MonitoringPlan {
+  [key: string]: unknown;
+}
+
+export type EvaluationState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type Verdict = 'RELEASE' | 'CONDITIONAL' | 'REJECT' | 'INSUFFICIENT_EVIDENCE';
+
+export interface EvalMetric {
+  value: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  n: number;
+  note?: string | null;
+}
+
+export interface EvalItem {
+  id: string;
+  question: string;
+  reference_answer: string | null;
+  answer: string | null;
+  contexts: string[];
+  /** Mixed: numbers, booleans (checks passed) and arrays (per-repeat results). */
+  scores: Record<string, number | boolean | null | (number | boolean)[]>;
+  passed: boolean | null;
+  failure_reason: string | null;
+  failure_class?: string | null;
+  detail?: Record<string, unknown> | null;
+  source: 'user' | 'generated' | 'security';
+}
+
+export interface TaxonomyClass {
+  name: string;
+  count: number;
+  examples: { item_id: string; question: string; reason: string }[];
+}
+
+/** Row of GET /api/evaluations (summary, no items or metrics). */
+export interface EvaluationSummary {
+  id: string;
+  project_id: string;
+  state: EvaluationState;
+  progress: { done: number; total: number };
+  synthetic: boolean;
+  verdict: Verdict | null;
+  status: string | null;
+  created: number;
+}
+
+export interface Evaluation {
+  id: string;
+  project_id: string;
+  state: EvaluationState;
+  progress: { done: number; total: number };
+  error: string | null;
+  synthetic: boolean;
+  metrics: Record<string, EvalMetric>;
+  decision: {
+    verdict: Verdict;
+    reasons: string[];
+    status?: string | null;
+    explanation?: string | null;
+    policy?: string | null;
+    policy_is_example?: boolean;
+    signoff?: { reviewer: string; decision: string; rationale?: string; signed_digest?: string } | null;
+  } | null;
+  /** Six headline dimensions, each with a confidence interval. */
+  scorecard?: Record<string, EvalMetric>;
+  failure_taxonomy?: Record<string, TaxonomyClass>;
+  items: EvalItem[];
+  created_at?: string;
+}
+
+export interface EvaluationOptions {
+  project_id: string;
+  max_questions?: number;
+  repeats?: number;
+  include_security?: boolean;
+  generate_questions?: boolean;
+  risk_focus?: string[];
+  /** Permit the offline synthetic question generator; results are then labelled SYNTHETIC. */
+  allow_synthetic?: boolean;
+  policy?: Record<string, unknown>;
+}

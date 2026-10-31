@@ -1,0 +1,40 @@
+# qe FlowOps. Start: `docker compose up --build -d`, open http://localhost:8000
+#
+# The API has NO authentication. It is published on loopback only. To expose it to a
+# team, put an authenticating reverse proxy in front (see docs/DEPLOY.md) and set
+# QE_ALLOWED_HOSTS to the public hostname.
+services:
+  qe:
+    build: .
+    image: qe-flowops:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: .env        # optional: provider keys (GROQ_API_KEY, OPENROUTER_API_KEY ...)
+        required: false
+    environment:
+      QE_ALLOWED_HOSTS: ${QE_ALLOWED_HOSTS:-}
+    volumes:
+      - qe-runs:/app/runs      # ledgers, projects, workspaces, evaluations
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+volumes:
+  qe-runs:

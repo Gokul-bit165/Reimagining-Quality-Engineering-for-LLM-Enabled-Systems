@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-10-31T06:38:55.929Z",
         "reason": "assistant decided, not user confirmed: paper/ledger palette is the documented direction in docs/UI_DESIGN.md (audit-report metaphor); revisit if the team changes direction"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "frontend/src/styles/flow.css"
+        ],
+        "createdAt": "2026-10-31T10:19:14.435Z",
+        "reason": "assistant decision, not user-confirmed: .quote is a blockquote for verbatim retrieved context/answer text, where a left rule is the standard quote convention, not a card accent"
       }
     ]
   }

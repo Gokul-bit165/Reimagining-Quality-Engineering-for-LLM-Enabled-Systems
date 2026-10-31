@@ -4,7 +4,6 @@ import { api } from '../../api';
 import { Table } from '../Table';
 import { MetricRow } from '../MetricRow';
 import { Facts } from '../Facts';
-import { pct } from '../IntervalBar';
 import { exportToExcel, exportToWordDoc } from '../../utils/reportExporter';
 
 interface ProcessInspectorProps {
@@ -27,7 +26,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const stageTitles: Record<number, { title: string; subtitle: string }> = {
-    1: { title: 'Risk Register & Taxonomy', subtitle: `id: owasp_${report.scenario.taxonomy_id.toLowerCase()}` },
+    1: { title: 'Risk Register & Taxonomy', subtitle: `id: owasp_${(report.scenario.taxonomy_id ?? "unknown").toLowerCase()}` },
     2: { title: 'Dynamic Test Generation', subtitle: 'id: testgen_kb_verbatim_gate' },
     3: { title: 'Sandbox Execution Engine', subtitle: `id: runner_${report.scenario.app}_${report.scenario.variant}` },
     4: { title: 'Grounding & Adversarial Attacks', subtitle: 'id: sink_oracles_asr_eval' },

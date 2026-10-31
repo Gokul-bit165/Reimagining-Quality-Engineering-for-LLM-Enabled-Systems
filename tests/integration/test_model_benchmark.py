@@ -186,3 +186,22 @@ def test_paid_models_need_an_owner_budget(client: TestClient,
 def test_benchmark_ids_are_validated_and_unknown_ones_404(client: TestClient) -> None:
     assert client.get("/api/benchmarks/..%2Fx").status_code in (400, 404)
     assert client.get("/api/benchmarks/bench-zzzzzzzz").status_code == 404
+
+
+def test_status_write_survives_a_transient_windows_file_lock(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from qe.modelbench import jobs
+
+    real_replace = Path.replace
+    calls = {"n": 0}
+
+    def flaky_replace(self: Path, target: Any) -> Path:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError("file in use")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    jobs._write(tmp_path, "bench-abcd1234", {"state": "done"})
+    assert calls["n"] == 2
+    assert (tmp_path / "bench-abcd1234.json").is_file() or list(tmp_path.glob("bench-abcd1234*"))
