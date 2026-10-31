@@ -39,5 +39,13 @@
 ## Interval methods
 Wilson/exact (Clopper–Pearson) or Bayesian beta for proportions; cluster-robust SEs for grouped items; paired bootstrap or McNemar for paired binary outcomes; avoid CLT at small n (Bowyer ✔S). Rule of three for zero-failure bounds.
 
+## Implemented estimators (code ↔ definition; `qe/stats/`)
+- `intervals.clopper_pearson(k, n)` — exact two-sided binomial interval (beta quantiles of Binomial CDF inversion). Conservative; coverage ≥ nominal.
+- `bayes.beta_credible(k, n, prior)` — equal-tailed posterior interval, posterior Beta(a₀+k, b₀+n−k); default prior Jeffreys Beta(½, ½). Prior is a modelling choice and must be recorded with the result. Guarantee: nominal coverage *averaged over the prior*, not conditional on p.
+- `cluster.cluster_rate([(k_g, n_g)])` — ratio estimator p = Σk/Σn, CR1 cluster-robust variance G/(G−1)·Σ(k_g − p·n_g)²/n², Student-t(G−1) interval clipped to [0,1]; reports design effect = Var_cluster / Var_binomial. Zero-variance cases fall back to Clopper–Pearson (`cluster_boundary_cp` over G clusters; `cluster_zero_variance_cp` over n items). Approximate for small G.
+- `judge.rogan_gladen` / `judge.judge_corrected_rate` — θ = (q + Sp − 1)/(Se + Sp − 1) with Se/Sp from a **human-labelled** calibration set; interval from Monte-Carlo over Jeffreys-Beta posteriors of q, Se, Sp (seeded, deterministic). Draws with Se + Sp − 1 ≤ 0 are dropped and reported as `unidentified_fraction`. Assumes calibration items are representative of the evaluated population (untested here).
+- `estimators.pass_hat_k_at(outcomes, k)` — τ-bench pass^k, mean over items of C(c,k)/C(n,k) (c passes of n trials); k=n gives the all-trials-pass fraction (`pass_hat_k`). `pass_hat_k_estimate` wraps k=n as a rate over items with a Clopper–Pearson interval (items are the unit).
+- Property tests: `tests/property/test_stats_properties.py`; simulated-coverage tests in `tests/unit/test_stats_ext.py` (seeds fixed; these are simulation checks of the implementation, not claims about any LLM system).
+
 ## Not to be used without declared policy
 Composite quality scores with invented weights; pass/fail thresholds not tied to a loss matrix.
