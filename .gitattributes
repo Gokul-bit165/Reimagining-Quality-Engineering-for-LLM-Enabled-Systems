@@ -1,2 +1,5 @@
 bench/** text eol=lf
 *.md text eol=lf
+*.png binary
+*.jpg binary
+*.sqlite binary
