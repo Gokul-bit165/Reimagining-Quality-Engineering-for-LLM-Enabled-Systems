@@ -11,6 +11,10 @@ __pycache__/
 runs/
 .playwright-mcp/
 .env.*
-
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
 frontend/node_modules/
 frontend/dist/
