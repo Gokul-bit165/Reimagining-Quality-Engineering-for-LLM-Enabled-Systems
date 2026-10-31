@@ -117,7 +117,9 @@ class OpenAICompatJudge:
         self._transport, self._env, self._dotenv = transport, env, dotenv
         self._timeout = timeout
 
-    def _verdict(self, item: VerifierInput, state: ClaimState, detail: str | None = None) -> Verdict:
+    def _verdict(
+        self, item: VerifierInput, state: ClaimState, detail: str | None = None
+    ) -> Verdict:
         return Verdict(claim_id=item.claim.claim_id, method=self.name,
                        method_class=self.method_class, method_version=self.version,
                        model_family=self.model.family, state=state, detail=detail)
@@ -150,7 +152,8 @@ class OpenAICompatJudge:
             raise
         except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError,
                 TypeError, ValueError) as exc:
-            return self._verdict(item, ClaimState.ABSTAIN, f"judge call failed: {type(exc).__name__}")
+            detail = f"judge call failed: {type(exc).__name__}"
+            return self._verdict(item, ClaimState.ABSTAIN, detail)
         state = parse_choice(raw)
         if state is None:
             return self._verdict(item, ClaimState.ABSTAIN, "reply was not a closed-choice label")

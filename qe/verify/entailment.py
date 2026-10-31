@@ -73,7 +73,7 @@ class EntailmentVerifier:
     def _verdict(self, item: VerifierInput, state: ClaimState, **kw: object) -> Verdict:
         return Verdict(claim_id=item.claim.claim_id, method=self.name,
                        method_class=self.method_class, method_version=self.version,
-                       state=state, **kw)  # type: ignore[arg-type]
+                       state=state, **kw)
 
     async def verify(self, item: VerifierInput) -> Verdict:
         if item.evidence_text is None:

@@ -81,7 +81,9 @@ class Aggregator:
                exact_check: bool = False) -> AdjudicatedVerdict:
         ids = tuple(v.cid() for v in verdicts)
 
-        def out(state: ClaimState, conf: float | None, layers: tuple[str, ...]) -> AdjudicatedVerdict:
+        def out(
+            state: ClaimState, conf: float | None, layers: tuple[str, ...]
+        ) -> AdjudicatedVerdict:
             return AdjudicatedVerdict(claim_id=claim_id, state=state, confidence=conf,
                                       n_eff=self._n_eff, layers_fired=layers, verdict_ids=ids)
 
@@ -102,7 +104,7 @@ class Aggregator:
         leaders = [s for s, p in probs.items() if p == top]
         if len(leaders) > 1:
             return out(ClaimState.ABSTAIN, top, ("vote_tie",))
-        layers = ("vote",)
+        layers: tuple[str, ...] = ("vote",)
         if self._conformal is not None:
             answered = self._conformal.answers(probs)
             if answered is None:

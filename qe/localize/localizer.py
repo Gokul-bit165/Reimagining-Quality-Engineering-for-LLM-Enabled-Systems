@@ -70,7 +70,9 @@ def rag_stale_doc(ctx: FailureContext) -> Hit | None:
     man = _manifest(ctx)
     stale = sorted({r["doc_id"] for r in _results(ctx)
                     if r["doc_id"] in man and r.get("doc_hash") != man[r["doc_id"]]["hash"]})
-    return ("retrieval", "retrieved_doc_hash_differs_from_manifest", tuple(stale)) if stale else None
+    if not stale:
+        return None
+    return ("retrieval", "retrieved_doc_hash_differs_from_manifest", tuple(stale))
 
 
 def rag_missing_expected(ctx: FailureContext) -> Hit | None:
@@ -160,7 +162,8 @@ def tool_missing_calls(ctx: FailureContext) -> Hit | None:
     seen: dict[str, int] = {}
     for c in _calls(ctx):
         seen[str(c["tool"])] = seen.get(str(c["tool"]), 0) + 1
-    short = [f"{t}:{seen.get(t, 0)}<{n}" for t, n in sorted(ctx.reference.get("expected_calls", {}).items())
+    expected = ctx.reference.get("expected_calls", {})
+    short = [f"{t}:{seen.get(t, 0)}<{n}" for t, n in sorted(expected.items())
              if seen.get(t, 0) < n]
     return ("tool_execution", "fewer_tool_calls_than_the_request_requires", tuple(short)) \
         if short else None
