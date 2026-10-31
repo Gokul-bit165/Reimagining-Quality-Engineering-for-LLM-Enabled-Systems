@@ -7,7 +7,7 @@ from pathlib import Path
 from qe.core.ids import sha256_hex
 from qe.core.schemas import Frozen
 
-PROMPT_DIR = Path(__file__).parent / "prompts"
+PROMPT_DIR = Path(__file__).parent / "prompt_texts_v1"
 
 
 class Prompt(Frozen):
