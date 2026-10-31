@@ -9,18 +9,16 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <nav class="rail" aria-label="Runs">
+  <nav class="rail" aria-label="Scenarios">
     <div class="brand">qe<small>Release evidence for LLM apps</small></div>
-    <h3 class="runs-h">Runs</h3>
+    <button class="btn" id="new-btn" type="button" style="margin-top: var(--space-5)">New scenario</button>
+    <h3 class="runs-h">Scenarios</h3>
     <ul class="run-list" id="run-list"></ul>
-    <label class="sr-only" for="run-select">Run</label>
+    <label class="sr-only" for="run-select">Scenario</label>
     <select class="rail-select" id="run-select"></select>
-    <h3>Demo data</h3>
-    <button class="btn" id="demo-btn" type="button">Regenerate demo runs</button>
-    <p class="eyebrow" id="demo-status" role="status" style="margin-top: var(--space-2)"></p>
   </nav>
   <main id="main" tabindex="-1" aria-live="polite">
-    <p class="empty">Loading runs…</p>
+    <p class="empty">Loading…</p>
   </main>
   <script type="module" src="/static/app.js"></script>
 </body>
