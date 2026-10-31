@@ -1,0 +1,18 @@
+label: "UNVERIFIED transcription; verify against genai.owasp.org before citing"
+name: owasp_agentic
+edition_note: >
+  Transcribed from research/10 (secondary sources, announced 9 Dec 2025) and the author's memory.
+  Names are paraphrased; official wording may differ. Do not cite.
+source_url: https://genai.owasp.org/
+verified: false
+categories:
+  - {id: ASI01, name: Agent Goal Hijack, description: "An attacker redirects the agent's objective through instructions in data or messages."}
+  - {id: ASI02, name: Tool Misuse and Exploitation, description: "The agent is induced to use legitimate tools in harmful or unintended ways."}
+  - {id: ASI03, name: Identity and Privilege Abuse, description: "Agents act with credentials or roles beyond what the requesting user is entitled to."}
+  - {id: ASI04, name: Agentic Supply Chain Vulnerabilities, description: "Compromised tools, plugins, prompts or other agents that the system depends on."}
+  - {id: ASI05, name: Unexpected Code Execution, description: "Agent-generated or agent-triggered code runs outside intended bounds."}
+  - {id: ASI06, name: Memory and Context Poisoning, description: "Persistent memory or shared context is corrupted or leaks across users or tasks."}
+  - {id: ASI07, name: Insecure Inter-Agent Communication, description: "Messages between agents can be spoofed, tampered with or misrouted."}
+  - {id: ASI08, name: Cascading Failures, description: "An error or compromise in one agent propagates through the workflow."}
+  - {id: ASI09, name: Human-Agent Trust Exploitation, description: "Users over-trust agent output or are manipulated through it."}
+  - {id: ASI10, name: Rogue Agents, description: "An agent drifts from or subverts its intended behaviour."}

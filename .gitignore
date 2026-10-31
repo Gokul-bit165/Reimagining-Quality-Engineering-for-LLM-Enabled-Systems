@@ -9,3 +9,4 @@ __pycache__/
 *.sqlite-wal
 *.sqlite-shm
 runs/
+.playwright-mcp/

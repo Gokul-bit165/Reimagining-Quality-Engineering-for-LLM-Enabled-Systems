@@ -9,11 +9,17 @@ import typer
 import yaml
 
 from qe.access.blackbox_http import negotiate
+from qe.cli import p1_commands
+from qe.cli.audit import audit_app
+from qe.cli.calibrate import calibrate
 from qe.core.ledger import SQLiteLedger
 from qe.core.schemas import Policy
 from qe.report.evidence_pack import build_pack, render_json, render_markdown
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+p1_commands.register(app)  # `view`, `bundle`
+app.add_typer(audit_app, name="audit")
+app.command()(calibrate)  # P2: split-conformal + panel n_eff
 
 
 @app.command()

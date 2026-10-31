@@ -1,0 +1,14 @@
+label: "Project-defined quality taxonomy (not an external standard); mirrors the sandbox defect classes in sandbox_apps/README.md"
+name: qe_quality
+verified: true
+categories:
+  - {id: QE-FAB, name: Fabricated claims, description: "Assertions not supported by the source of truth."}
+  - {id: QE-CIT, name: Invalid citations, description: "Cited sources that do not exist or do not contain the quoted text."}
+  - {id: QE-CON, name: Contradictions, description: "Answers that contradict earlier answers or the source of truth."}
+  - {id: QE-RET, name: Retrieval failures, description: "Missing, stale, foreign or truncated retrieved context."}
+  - {id: QE-INJ, name: Prompt injection susceptibility, description: "Following instructions embedded in untrusted content."}
+  - {id: QE-TOOL, name: Unauthorized tool attempts, description: "Tool calls outside the caller's entitlements or allowlist."}
+  - {id: QE-MEM, name: Memory contamination, description: "State leaking across users, sessions or agents."}
+  - {id: QE-ROUTE, name: Wrong agent transitions, description: "Handoffs that violate the declared workflow."}
+  - {id: QE-INC, name: Incomplete task execution, description: "Requested steps silently skipped."}
+  - {id: QE-DRIFT, name: Model or prompt drift, description: "Behaviour changes after a model or prompt version change."}

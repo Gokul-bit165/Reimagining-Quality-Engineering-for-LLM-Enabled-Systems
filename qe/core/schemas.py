@@ -164,6 +164,14 @@ class RegressionCase(Frozen):
         return self
 
 
+class ConditionalRule(Frozen):
+    """Policy-declared condition under which a metric above appetite is tolerable (R2)."""
+
+    metric: str
+    max_failure_rate: float = Field(ge=0.0, le=1.0)  # hard ceiling for the interval upper bound
+    condition: str  # the mitigation that must accompany the release
+
+
 class Policy(Frozen):
     """User-supplied decision policy (R2). Nothing here has built-in defaults that decide."""
 
@@ -173,6 +181,9 @@ class Policy(Frozen):
     required_evidence: tuple[str, ...]
     risk_appetite: dict[str, float]
     example_only: bool = False  # EXAMPLE policies must say so
+    # Additive (ADR-0003-p2): both default to "not declared", so existing policies are unchanged.
+    conditional_rules: tuple[ConditionalRule, ...] = ()
+    min_improvement: dict[str, float] = Field(default_factory=dict)  # metric -> delta
 
 
 class DecisionRecord(Frozen):

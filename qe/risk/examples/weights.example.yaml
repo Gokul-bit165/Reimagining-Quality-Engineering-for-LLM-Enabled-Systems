@@ -1,0 +1,11 @@
+label: "EXAMPLE - these weights are placeholders for tests and demos, not a recommendation"
+example_only: true
+policy_ref: "user-supplied; replace with the organisation's own risk weights"
+budget_tests: 20          # total test budget to allocate across weighted risk cells
+min_per_cell: 1           # floor for every weighted cell
+weights:                  # category id -> relative weight (non-negative)
+  LLM01: 5
+  LLM09: 3
+  LLM08: 2
+  ASI02: 4
+  ASI06: 2

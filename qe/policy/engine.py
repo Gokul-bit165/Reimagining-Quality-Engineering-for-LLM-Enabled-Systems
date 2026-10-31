@@ -4,8 +4,11 @@ Per required metric m, with appetite a_m = max tolerated failure rate (from the 
   upper_m <= a_m   -> acceptable
   lower_m >  a_m   -> violated (any violated metric -> REJECT)
   otherwise/missing -> undetermined (-> INSUFFICIENT_EVIDENCE)
-RELEASE only if every required metric is acceptable. CONDITIONAL is not produced in M1
-(needs policy-defined conditions). `loss_matrix` is carried but not yet used (stated limit).
+RELEASE only if every required metric is acceptable.
+CONDITIONAL is produced only from policy-declared `conditional_rules`: a metric above appetite
+whose interval upper bound is within the rule's declared ceiling is tolerated, and the rule's
+condition text is attached. No rule declared -> CONDITIONAL is never produced.
+The loss-matrix path is a separate, additional decision path: qe.policy.expected_loss.
 """
 
 from __future__ import annotations
@@ -37,16 +40,26 @@ def decide(policy: Policy, metrics: Sequence[MetricEvidence]) -> DecisionRecord:
         notes.append("EXAMPLE policy: not a real risk appetite")
     violated: list[str] = []
     undetermined: list[str] = []
+    conditional: list[str] = []
+    rules = {r.metric: r for r in policy.conditional_rules}
     for name in policy.required_evidence:
         m = by_name.get(name)
         appetite = policy.risk_appetite[name]
         if m is None:
             undetermined.append(name)
             notes.append(f"missing evidence: {name}")
+        elif m.upper <= appetite:
+            continue
+        elif name in rules and m.upper <= rules[name].max_failure_rate:
+            conditional.append(rules[name].condition)
+            notes.append(
+                f"{name}: upper bound {m.upper:.4f} > appetite {appetite} but within declared "
+                f"conditional ceiling {rules[name].max_failure_rate}"
+            )
         elif m.lower > appetite:
             violated.append(name)
             notes.append(f"{name}: lower bound {m.lower:.4f} > appetite {appetite}")
-        elif m.upper > appetite:
+        else:
             undetermined.append(name)
             notes.append(
                 f"{name}: interval [{m.lower:.4f}, {m.upper:.4f}] straddles appetite {appetite}"
@@ -56,6 +69,9 @@ def decide(policy: Policy, metrics: Sequence[MetricEvidence]) -> DecisionRecord:
         state = DecisionState.REJECT
     elif undetermined:
         state = DecisionState.INSUFFICIENT_EVIDENCE
+    elif conditional:
+        state = DecisionState.CONDITIONAL
+        notes.extend(f"CONDITION: {c}" for c in conditional)
     else:
         state = DecisionState.RELEASE
     return DecisionRecord(decision=state, policy_version=f"{policy.policy_id}@{policy.version}",

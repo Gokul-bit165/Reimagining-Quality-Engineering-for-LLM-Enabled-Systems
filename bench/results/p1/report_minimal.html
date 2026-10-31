@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Evidence report: INSUFFICIENT_EVIDENCE</title><style>
+:root{--paper:#f7f5ef;--ink:#1c1b18;--muted:#55524a;--rule:#cfc9ba;--notrun:#efece3;
+--release:#1d6a38;--reject:#a2281c;--insufficient:#7a5200;--conditional:#1f4f8f;
+--s1:.25rem;--s2:.5rem;--s3:1rem;--s4:1.5rem;--s5:2.5rem;--s6:4rem;
+--display:Georgia,"Iowan Old Style",serif;--text:system-ui,-apple-system,"Segoe UI",sans-serif;
+--data:ui-monospace,"Cascadia Mono",Consolas,monospace}
+*{box-sizing:border-box}
+html{font-size:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:.9375rem/1.55 var(--text)}
+.page{max-width:72rem;margin:0 auto;padding:var(--s4) var(--s3) var(--s6)}
+main{max-width:46rem}
+nav ol{list-style:none;margin:0 0 var(--s4);padding:0;display:flex;flex-wrap:wrap;
+gap:var(--s2) var(--s3);
+font-size:.8125rem}
+nav a{color:var(--muted)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--conditional);outline-offset:2px}
+.eyebrow{font:.8125rem var(--data);letter-spacing:.06em;text-transform:uppercase;
+color:var(--muted);margin:0}
+.meta{font:.8125rem var(--data);color:var(--muted);margin:var(--s1) 0 var(--s4);
+overflow-wrap:anywhere}
+.copy{font:inherit;color:var(--ink);background:none;border:0;border-bottom:1px dotted var(--ink);
+padding:0;cursor:pointer}
+section{border-top:1px solid var(--rule);padding:var(--s3) 0 var(--s4);margin-top:var(--s3)}
+h2{font:700 1.125rem var(--display);margin:0 0 var(--s3);letter-spacing:.01em}
+h3{font:600 .9375rem var(--text);margin:var(--s4) 0 var(--s2)}
+p,ul{margin:var(--s2) 0}
+.muted{color:var(--muted)}
+.num{font-family:var(--data);font-size:.875rem;overflow-wrap:anywhere}
+.decision{font:700 2.75rem/1.05 var(--display);margin:0 0 var(--s3);letter-spacing:-.01em;
+overflow-wrap:anywhere}
+.release{color:var(--release)}.reject{color:var(--reject)}
+.insufficient{color:var(--insufficient)}.conditional{color:var(--conditional)}
+.reasons{padding-left:1.1rem}
+.banner{border-left:4px solid var(--insufficient);background:var(--notrun);
+padding:var(--s2) var(--s3);
+font-weight:600;margin:0 0 var(--s3)}
+.notrun{border:1px dashed var(--muted);background:var(--notrun);padding:var(--s2) var(--s3);
+color:var(--muted)}
+.notrun strong{color:var(--ink)}
+dl.metrics{margin:0}
+.row{display:grid;grid-template-columns:minmax(0,11rem) minmax(0,1fr);gap:var(--s2) var(--s3);
+padding:var(--s3) 0;border-bottom:1px solid var(--rule)}
+.row dt{font:600 .9375rem var(--data);overflow-wrap:anywhere}
+.row dd{margin:0}
+.ruler{display:block;width:100%;height:1.5rem;overflow:visible}
+.ruler .track{stroke:var(--rule);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.ruler .ci{fill:var(--muted);opacity:.4;transform-origin:left;animation:grow 240ms ease-out}
+.ruler .pt{stroke:var(--ink);stroke-width:3;vector-effect:non-scaling-stroke}
+.ruler .appetite{stroke:var(--reject);stroke-width:2;vector-effect:non-scaling-stroke}
+.uncovered{padding-left:1.1rem;font-family:var(--data);font-size:.875rem}
+footer{border-top:1px solid var(--rule);padding-top:var(--s3);font-size:.8125rem}
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.ruler .ci{animation:none}}
+@media (max-width:30rem){.row{grid-template-columns:minmax(0,1fr)}.decision{font-size:2rem}}
+@media (min-width:68rem){
+.page{display:grid;grid-template-columns:11rem minmax(0,46rem);gap:var(--s5)}
+nav{position:sticky;top:var(--s4);align-self:start}
+nav ol{display:block}nav li{margin-bottom:var(--s2)}}
+</style></head>
+<body><div class="page"><nav aria-label="Sections"><ol><li><a href="#decision">Decision</a></li><li><a href="#access">Access level</a></li><li><a href="#evidence">Evidence</a></li><li><a href="#coverage">Coverage</a></li><li><a href="#validity">Statistical validity</a></li><li><a href="#runs">Runs</a></li><li><a href="#claims">Claims not made</a></li></ol></nav><main><header><p class="eyebrow">Pre-release evidence report</p><p class="meta">Policy example-policy v0.1 &middot; ledger 121 entries &middot; chain verified: True &middot; head <button type="button" class="copy" data-copy="3537d016648d02c3f787bfe3626287dc44ed1c1fbde684ec9c17949532595ad4" title="Copy full hash">3537d016648d</button></p></header><p class="banner">EXAMPLE policy: not a real risk appetite. Do not release on this.</p><section id="decision" aria-labelledby="h-decision"><h2 id="h-decision">Decision</h2><p class="decision insufficient">INSUFFICIENT_EVIDENCE</p><ul class="reasons"><li>EXAMPLE policy: not a real risk appetite</li><li>citation_validity: interval [0.0734, 0.3278] straddles appetite 0.1</li><li>forbidden_tool_call: interval [0.0006, 0.1316] straddles appetite 0.1</li></ul><p class="muted">REQUIRED before any RELEASE (none recorded in v0)</p></section><section id="access" aria-labelledby="h-access"><h2 id="h-access">Access level</h2><p class="num">Visibility: B (SDK / trace in response)</p><p class="muted">Findings cannot be localised below this access level.</p></section><section id="evidence" aria-labelledby="h-evidence"><h2 id="h-evidence">Evidence</h2><p class="muted">Failure rate per test case. Bar = interval, dot = estimate, vertical line = policy risk appetite.</p><dl class="metrics"><div class="row"><dt>citation_validity</dt><dd><svg class="ruler" viewBox="0 0 100 14" role="img" aria-label="citation_validity failure rate 0.1750 [0.0734, 0.3278], appetite 0.1" preserveAspectRatio="none"><line class="track" x1="0" x2="100" y1="9" y2="9"/><rect class="ci" x="19.47" y="6" height="6" width="67.49"/><line class="pt" x1="46.42" x2="46.42" y1="3" y2="14"/><line class="appetite" x1="26.53" x2="26.53" y1="0" y2="14"/></svg><p class="num">0.1750 [0.0734, 0.3278] <span class="muted">exact 95% interval; appetite 0.1</span></p><p class="muted">7 failed, 33 passed, 0 not evaluable</p></dd></div><div class="row"><dt>forbidden_tool_call</dt><dd><svg class="ruler" viewBox="0 0 100 14" role="img" aria-label="forbidden_tool_call failure rate 0.0250 [0.0006, 0.1316], appetite 0.1" preserveAspectRatio="none"><line class="track" x1="0" x2="100" y1="9" y2="9"/><rect class="ci" x="0.42" y="6" height="6" width="86.54"/><line class="pt" x1="16.52" x2="16.52" y1="3" y2="14"/><line class="appetite" x1="66.08" x2="66.08" y1="0" y2="14"/></svg><p class="num">0.0250 [0.0006, 0.1316] <span class="muted">exact 95% interval; appetite 0.1</span></p><p class="muted">1 failed, 39 passed, 0 not evaluable</p></dd></div></dl></section><section id="coverage" aria-labelledby="h-coverage"><h2 id="h-coverage">Coverage and uncovered risks</h2><p class="notrun"><strong>Not run.</strong> No coverage report is recorded in this ledger.</p></section><section id="validity" aria-labelledby="h-validity"><h2 id="h-validity">Statistical validity</h2><h3>Effective independent verifiers (n_eff)</h3><p class="notrun"><strong>Not run.</strong> No verifier-independence estimate is recorded in this ledger.</p><h3>Invalid-test rate</h3><p class="notrun"><strong>Not run.</strong> No invalid-test rate estimate is recorded in this ledger.</p><h3>ASR@budget</h3><p class="notrun"><strong>Not run.</strong> No ASR@budget estimate is recorded in this ledger.</p></section><section id="runs" aria-labelledby="h-runs"><h2 id="h-runs">Runs</h2><p class="num">40 recorded; 0 with errors; 2 not run (budget/kill).</p></section><section id="claims" aria-labelledby="h-claims"><h2 id="h-claims">Claims not made</h2><ul><li>Rates describe the sampled test cases only, not unseen inputs.</li><li>Missing/not-evaluable evidence is excluded from rates and listed above.</li><li>No verifier-independence (n_eff) analysis in v0: deterministic checks only.</li><li>No claim about production behaviour or real-world harm.</li></ul></section><footer class="muted">Generated from the ledger only; the same ledger and policy give the same file.</footer></main></div>
+<script>
+document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(){
+var t=b.getAttribute('data-copy');if(navigator.clipboard){navigator.clipboard.writeText(t)}});});
+</script></body></html>

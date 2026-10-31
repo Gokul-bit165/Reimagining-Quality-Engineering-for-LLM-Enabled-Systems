@@ -1,0 +1,19 @@
+label: "UNVERIFIED transcription; verify against genai.owasp.org before citing"
+name: owasp_llm_top10
+edition_note: >
+  Transcribed from the author's memory of the OWASP Top 10 for LLM Applications (2025 numbering).
+  research/10 reports a 2026 edition known only from secondary sources, with possible renames and
+  re-rankings. Ids, names and descriptions below may not match the current official list. Do not cite.
+source_url: https://genai.owasp.org/llm-top-10/
+verified: false
+categories:
+  - {id: LLM01, name: Prompt Injection, description: "Inputs or retrieved/tool content that alter the model's behaviour against the developer's intent."}
+  - {id: LLM02, name: Sensitive Information Disclosure, description: "The application reveals confidential or personal data in outputs."}
+  - {id: LLM03, name: Supply Chain, description: "Compromised or vulnerable models, datasets, plugins or dependencies."}
+  - {id: LLM04, name: Data and Model Poisoning, description: "Tampered training, fine-tuning or embedding data that skews behaviour."}
+  - {id: LLM05, name: Improper Output Handling, description: "Model output passed to downstream systems without validation or encoding."}
+  - {id: LLM06, name: Excessive Agency, description: "The system is granted more tools, permissions or autonomy than its task needs."}
+  - {id: LLM07, name: System Prompt Leakage, description: "Hidden instructions or secrets in the system prompt are exposed."}
+  - {id: LLM08, name: Vector and Embedding Weaknesses, description: "Weaknesses in retrieval and embedding stores that allow manipulation or leakage."}
+  - {id: LLM09, name: Misinformation, description: "Confident but false or unsupported output, including fabricated citations."}
+  - {id: LLM10, name: Unbounded Consumption, description: "Uncontrolled resource use enabling cost, denial of service or extraction."}
