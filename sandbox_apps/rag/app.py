@@ -72,11 +72,18 @@ class RagApp(SandboxApp):
         if isinstance(fake, FakeLLM):
             fake.register({"rag_answer": rag_handler})
         model = (
-            "fake-rag-1" if isinstance(fake, FakeLLM) else str(getattr(fake, "model_name", "llm"))
+            f"fake-rag-{2 if drift else 1}"
+            if isinstance(fake, FakeLLM)
+            else str(getattr(fake, "model_name", "llm"))
         )
-        super().__init__(variant, fake, seed, drift, model, "v1")
+        super().__init__(variant, fake, seed, drift, model, "v2" if drift else "v1")
         self._official = official_docs()
         self._docs = seeded_docs() if self.seeded else official_docs()
+        if self.seeded and drift:  # SEEDED (RAG-009): v2 re-ingest silently edits a limit, no bump
+            kb3 = self._docs["KB-003"]
+            text = str(kb3["text"]).replace("30 kg", "25 kg")
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+            self._docs = {**self._docs, "KB-003": {**kb3, "text": text, "hash": digest}}
         if self.seeded:  # SEEDED (RAG-005): a 'safety filter' silently drops the hazmat document
             self._docs = {k: v for k, v in self._docs.items() if "hazmat" not in v["text"].lower()}
         self._chunks: dict[str, Chunk] = {}

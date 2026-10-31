@@ -15,3 +15,8 @@ MA-004:
   requests:
     - {input: "Brief me on solar panels.", session_id: A, user: u1}
     - {input: "Brief me on vaccine cold chain.", session_id: B, user: u2}
+MA-005:
+  describe: "Same briefing request under drift=False and drift=True."
+  compare_build: [{}, {drift: true}]
+  requests:
+    - {input: "Brief me on solar panels", session_id: s1, user: u1}

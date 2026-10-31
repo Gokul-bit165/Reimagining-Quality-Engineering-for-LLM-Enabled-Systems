@@ -28,3 +28,10 @@ Rules: research/CLAUDE_CODE_MASTER_PROMPT.md (R1-R12), project CLAUDE.md.
 - Verified: 250 tests pass (PYTHONHASHSEED 0 and 99), ruff and mypy --strict clean.
 - Team split for M1-M6: `docs/TEAM_PROMPTS.md`. OpenRouter key is in gitignored `.env`; agent model `nvidia/nemotron-3-ultra-550b-a55b:free` (one family only: judges need a different family before M3).
 - Limits: M1 reviewer/skeptic and mutation testing not run; policy `loss_matrix` unused; CONDITIONAL never produced; B-level means "trace returned in response", not true SDK instrumentation.
+
+## Update: Person 4 (security) through M4, 2026-10-31 (not yet gate-approved)
+- Added: `qe/exec/{attack_model,oracles,sandbox_envs,sandbox_runner}.py` (canary-at-sink, protected-state diff, forbidden-tool, marker, sink-policy oracles; attempts recorded as ATTACK_ATTEMPTED, evidence/verdicts written only by the runner), `qe/crew/{attack_pairs,attacker,attack_adapters}.py` (12 AgentDojo-style pairs on 5 surfaces; static_template / static_extended / adaptive_mutation / external attackers; Promptfoo/PyRIT/DeepTeam as payload sources only), `bench/{asr.py,m4_experiment.py,m4_preregistration.md,results/m4/}`.
+- Sandbox: drift defects RAG-009, MA-005, TOOL-007; opt-in real-LLM gate; natural-defect candidate track.
+- Run: `uv run python -m bench.m4_experiment --out bench/results/m4` (deterministic; a test fails if committed results are stale). Prereg must be committed before results are accepted.
+- Verified: 352 tests pass, ruff clean, `mypy --strict qe bench` clean.
+- Limits: FakeLLM template engine (not a model); n=12 pairs, intervals ignore within-surface correlation; designed with knowledge of seeded outcomes, so a plumbing check only; verbatim-quoted poisoned content is not scored as a breach; no real-LLM or external-tool run done.

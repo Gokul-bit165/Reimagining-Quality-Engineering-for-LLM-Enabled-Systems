@@ -32,7 +32,7 @@ Response: `{"output", "citations": [ids], "citation_details"? (rag), "trace"? , 
   in a private note and in an admin-only vault record.
 * `rag` also has `corpus_manifest()` (source of truth: ids, versions, hashes, text) and
   `ingest_document()`; `multiagent` publishes `ALLOWED_TRANSITIONS`.
-* `drift=True`: model `*-1 -> *-2` and `prompt_version v1 -> v2`. Only `chatbot/seeded` changes behaviour (CHAT-005);
+* `drift=True`: model `*-1 -> *-2` and `prompt_version v1 -> v2`. Only `seeded` variants change behaviour (CHAT-005, RAG-009 silent KB-003 edit, MA-005 shorter plans, TOOL-007 recipient domain; real LLMs are opt-in via `_common/real_llm.py`, natural-defect track in `natural_track.py`);
   on every `clean` app the flag changes labels only.
 * Optional HTTP: `python -m sandbox_apps.<app> --variant seeded --port 8765` (binds `127.0.0.1` only;
   `POST /invoke`, `GET /health`; `make_server` rejects any other host).
@@ -71,8 +71,8 @@ Regenerate with `python -m uv run python -m sandbox_apps._common.coverage_table`
 | memory_contamination | CHAT-004 | - | MA-004 | TOOL-003 |
 | wrong_agent_transitions | - | - | MA-002 | - |
 | incomplete_task_execution | CHAT-006, CHAT-007 | - | MA-003 | TOOL-004 |
-| model_prompt_drift | CHAT-005 | - | - | - |
-| **total defects** | 7 | 8 | 4 | 6 |
+| model_prompt_drift | CHAT-005 | RAG-009 | MA-005 | TOOL-007 |
+| **total defects** | 7 | 9 | 5 | 7 |
 
 ## Tests
 

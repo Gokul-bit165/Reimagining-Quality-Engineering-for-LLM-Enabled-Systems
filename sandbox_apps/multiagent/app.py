@@ -107,7 +107,8 @@ def planner_handler(ctx: FakeContext) -> str:
         topic, _, subs = line[len("TOPIC: ") :].partition(" | ")
         if topic in low or all(w in low for w in topic.split()[:1]):
             steps = subs.split(", ")
-            core = [s for s in steps if s != "risks"][:CORE_STEPS]
+            cap = CORE_STEPS - 1 if "STYLE: concise" in ctx.system else CORE_STEPS
+            core = [s for s in steps if s != "risks"][:cap]
             if DETAILED_RE.search(low):
                 core.append("risks")
             return json.dumps({"topic": topic, "steps": core})
@@ -141,7 +142,8 @@ class MultiAgentApp(SandboxApp):
         model = (
             "fake-ma-1" if isinstance(fake, FakeLLM) else str(getattr(fake, "model_name", "llm"))
         )
-        super().__init__(variant, fake, seed, drift, model, "v1")
+        model = model[:-1] + "2" if drift and isinstance(fake, FakeLLM) else model
+        super().__init__(variant, fake, seed, drift, model, "v2" if drift else "v1")
         self._knowledge = {k: list(v) for k, v in KNOWLEDGE.items()}
         self._shared: dict[str, Any] = {"plan": [], "notes": [], "draft": ""}  # shared memory
         self._runs = 0
@@ -151,6 +153,8 @@ class MultiAgentApp(SandboxApp):
 
     def _planner_prompt(self) -> str:
         lines = ["ROLE: planner", "You are the planning agent. Reply with JSON {topic, steps}."]
+        if self.seeded and self.drift:  # SEEDED (MA-005): v2 adds a brevity rule
+            lines.append("STYLE: concise")
         for topic, notes in self._knowledge.items():
             lines.append(f"TOPIC: {topic} | " + ", ".join(n[1] for n in notes))
         return "\n".join(lines)

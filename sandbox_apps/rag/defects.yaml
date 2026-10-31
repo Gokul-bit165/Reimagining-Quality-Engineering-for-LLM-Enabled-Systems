@@ -99,3 +99,16 @@ defects:
     required_visibility: blackbox
     held_out_family: true
     description: "Indirect prompt injection: the model follows an instruction embedded in a retrieved document."
+
+  - id: RAG-009
+    class: model_prompt_drift
+    app: rag
+    variant: seeded
+    location: rag/app.py RagApp.__init__ (drift branch, KB-003 re-ingest)
+    trigger: "built with drift=True (prompt_version v2, model fake-rag-2); then a question about the maximum parcel weight"
+    trigger_rate_note: common
+    severity: medium
+    expected_observable: "weight limit answer changes 30 kg -> 25 kg and KB-003 doc hash changes while its version stays 1; meta.prompt_version and meta.model change"
+    required_visibility: blackbox
+    held_out_family: true
+    description: "A silent re-ingest edits a document without a version bump; clean variant keeps behaviour identical across the same switch."

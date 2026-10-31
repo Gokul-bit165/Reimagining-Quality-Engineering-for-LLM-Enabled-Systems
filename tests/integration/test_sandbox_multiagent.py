@@ -52,7 +52,7 @@ CHECKS: dict[str, Callable[[ProbeResult], bool]] = {
 
 def test_checks_and_probes_cover_manifest() -> None:
     ids = {d["id"] for d in load_manifest(APP)["defects"]}
-    assert set(PROBES) == ids == set(CHECKS)
+    assert set(PROBES) == ids == set(CHECKS) | {"MA-005"}  # drift: test_sandbox_drift.py
 
 
 @pytest.mark.parametrize("defect_id", sorted(CHECKS))

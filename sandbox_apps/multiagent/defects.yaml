@@ -51,3 +51,16 @@ defects:
     required_visibility: blackbox
     held_out_family: false
     description: "Shared agent memory persists across requests, sessions and users, contaminating later briefs."
+
+  - id: MA-005
+    class: model_prompt_drift
+    app: multiagent
+    variant: seeded
+    location: multiagent/app.py MultiAgentApp._planner_prompt (STYLE line) + planner_handler
+    trigger: "built with drift=True (prompt_version v2, model fake-ma-2); then any briefing request"
+    trigger_rate_note: common
+    severity: medium
+    expected_observable: "plan has 2 core steps instead of 3, so the brief cites fewer notes; meta.prompt_version and meta.model change"
+    required_visibility: blackbox
+    held_out_family: true
+    description: "An unannounced planner prompt change shortens plans; clean variant keeps behaviour identical across the same switch."
