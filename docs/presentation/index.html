@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>qe: release evidence for LLM applications</title>
+<link rel="icon" href="data:,">
+<style>
+/* Tokens: same palette as the product UI (docs/UI_DESIGN.md). System fonts only: works offline. */
+:root {
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --paper: #faf8f3; --paper-sunk: #f1eee6; --ink: #1d1b17; --ink-soft: #5a554b; --rule: #d9d4c7;
+  --ok: #1d6b3a; --bad: #a3281f; --warn: #8a5a00; --neutral: #4a4f6a; --bar: #cfc8b4;
+  --s1: 8px; --s2: 16px; --s3: 24px; --s4: 40px; --s5: 64px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; background: #e9e5da; overflow: hidden; font-family: var(--font-sans); color: var(--ink); }
+.stage { position: absolute; left: 50%; top: 50%; width: 1280px; height: 720px; transform-origin: center; background: var(--paper); box-shadow: 0 0 0 1px var(--rule); overflow: hidden; }
+.slide { position: absolute; inset: 0; padding: 56px 72px 64px; display: none; flex-direction: column; }
+.slide.active { display: flex; }
+.kicker { font: 600 14px var(--font-sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: var(--s2); }
+h1, h2 { font-family: var(--font-serif); font-weight: 600; line-height: 1.08; letter-spacing: -.01em; }
+h1 { font-size: 56px; max-width: 900px; } h2 { font-size: 40px; max-width: 1000px; }
+.lede { font-size: 26px; line-height: 1.4; max-width: 880px; margin-top: var(--s3); }
+.body { flex: 1; display: flex; gap: var(--s4); margin-top: var(--s4); min-height: 0; }
+.col { flex: 1; min-width: 0; }
+.col h3 { font: 600 15px var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); padding-bottom: var(--s1); border-bottom: 1px solid var(--ink); margin-bottom: var(--s2); }
+ul { list-style: none; } li { font-size: 23px; line-height: 1.38; padding: 7px 0; border-bottom: 1px solid var(--rule); }
+li:last-child { border-bottom: 0; }
+li b { font-weight: 600; } .soft { color: var(--ink-soft); } .mono { font-family: var(--font-mono); font-size: 18px; }
+.tag { display: inline-block; font: 600 13px var(--font-sans); letter-spacing: .04em; padding: 2px 8px; border: 1px solid currentColor; border-radius: 2px; vertical-align: middle; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); } .neutral { color: var(--neutral); }
+.note { border: 1px solid var(--warn); background: var(--paper-sunk); padding: 12px 18px; font-size: 19px; line-height: 1.4; border-radius: 2px; margin-top: var(--s2); }
+.flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px 12px; margin-top: var(--s4); }
+.step { border: 1px solid var(--ink); border-radius: 2px; padding: 12px 14px; min-height: 92px; background: var(--paper); }
+.step b { display: block; font: 600 20px var(--font-serif); } .step span { font-size: 16px; color: var(--ink-soft); line-height: 1.3; display: block; margin-top: 4px; }
+.step.plan { border-style: dashed; border-color: var(--ink-soft); }
+.big { font: 600 64px var(--font-serif); line-height: 1; } .bigcap { font-size: 18px; color: var(--ink-soft); margin-top: 6px; line-height: 1.3; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); margin-top: var(--s3); }
+.stat { border-top: 2px solid var(--ink); padding-top: var(--s2); }
+svg.ib { display: block; width: 100%; height: 64px; }
+svg.ib .axis { stroke: var(--rule); stroke-width: 2; } svg.ib .range { fill: var(--bar); } svg.ib .pt { fill: var(--ink); }
+svg.ib .line { stroke: var(--bad); stroke-width: 2.5; stroke-dasharray: 5 4; } svg.ib text { font: 14px var(--font-sans); fill: var(--ink-soft); }
+svg.ib text.lab { fill: var(--bad); font-weight: 600; }
+.barrow { margin-bottom: var(--s2); } .barrow p { font-size: 20px; margin-bottom: 2px; }
+.footer { position: absolute; left: 72px; right: 72px; bottom: 22px; display: flex; justify-content: space-between; font-size: 14px; color: var(--ink-soft); }
+.states { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: var(--s3); }
+.state { border: 1px solid currentColor; border-radius: 2px; padding: 12px 14px; font: 600 22px var(--font-serif); } .state span { display: block; font: 15px var(--font-sans); color: var(--ink); margin-top: 4px; }
+.progress { position: fixed; top: 0; left: 0; height: 4px; background: var(--ink); transition: width .25s; z-index: 10; }
+.hint { position: fixed; bottom: 8px; left: 12px; font-size: 12px; color: var(--ink-soft); z-index: 10; }
+.notes-panel { position: fixed; left: 0; right: 0; bottom: 0; background: var(--ink); color: var(--paper); padding: 14px 24px; font-size: 16px; line-height: 1.45; display: none; z-index: 20; max-height: 28vh; overflow: auto; }
+.notes-panel.show { display: block; }
+@media (prefers-reduced-motion: reduce) { .progress { transition: none; } }
+@media print { @page { size: 1280px 720px; margin: 0; } html, body { overflow: visible; height: auto; background: #fff; }
+  .stage { position: static; transform: none !important; width: 1280px; height: auto; box-shadow: none; overflow: visible; }
+  .slide { display: flex !important; position: relative; width: 1280px; height: 720px; page-break-after: always; }
+  .progress, .hint, .notes-panel { display: none !important; } }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="stage" id="stage">
+
+<!-- 1 -->
+<section class="slide active" data-notes="Introduce the problem in one line: a few good prompts do not give release confidence. Our answer is a framework that generates tests from risks, attacks the app, and refuses to say release unless the evidence supports it.">
+  <h1 style="margin-top: 120px;">qe: release evidence<br>for LLM applications</h1>
+  <p class="lede">Describe a risk. We generate the tests, attack the app, check grounding, and recommend Release, Conditional or Reject, with the evidence and the uncertainty shown.</p>
+  <div class="footer"><span>Challenge 04 · AI Quality Engineering for LLM-enabled systems</span><span>Demo data is simulated and labelled</span></div>
+</section>
+
+<!-- 2 -->
+<section class="slide" data-notes="Traditional testing assumes the same input gives the same output. LLM apps break that. The brief says it directly: a few successful prompts are not enough. We turn that sentence into the design rule.">
+  <h2>A few successful prompts do not establish release confidence</h2>
+  <div class="body">
+    <div class="col"><h3>Why prompts alone fail</h3><ul>
+      <li><b>Hallucination</b> and unsupported claims</li><li><b>Grounding</b> failures and bad citations</li>
+      <li><b>Prompt injection</b> and tool misuse</li><li><b>Variability</b> and model drift</li></ul></div>
+    <div class="col"><h3>What a release decision needs</h3><ul>
+      <li>Tests that adapt to the risk, not a fixed prompt list</li><li>Evidence you can audit later</li>
+      <li>Uncertainty, not a single score</li><li>A human who signs off</li></ul></div>
+  </div>
+  <div class="footer"><span>Source: challenge brief</span><span>2 / 12</span></div>
+</section>
+
+<!-- 3 -->
+<section class="slide" data-notes="This is the whole brief as one pipeline. Solid boxes are implemented and demonstrable; the dashed box, monitor, is a written plan only. Say that out loud.">
+  <h2>The full chain, from risk to regression</h2>
+  <div class="flow">
+    <div class="step"><b>1 Define risks</b><span>OWASP LLM category plus your own words</span></div>
+    <div class="step"><b>2 Generate tests</b><span>from risk, sources, prior failures</span></div>
+    <div class="step"><b>3 Execute</b><span>repeats, budgets, kill switch</span></div>
+    <div class="step"><b>4 Capture</b><span>response, citations, trace</span></div>
+    <div class="step"><b>5 Verify grounding</b><span>citations, figures, sources</span></div>
+    <div class="step"><b>6 Attack</b><span>12 injection and misuse pairs</span></div>
+    <div class="step"><b>7 Classify failures</b><span>by location, with evidence</span></div>
+    <div class="step"><b>8 Score</b><span>per-metric intervals</span></div>
+    <div class="step"><b>9 Recommend</b><span>Release, Conditional, Reject, or Insufficient</span></div>
+    <div class="step"><b>10 Human review</b><span>sign-off recorded</span></div>
+    <div class="step plan"><b>11 Monitor</b><span>written plan, not running</span></div>
+    <div class="step"><b>12 Regress</b><span>failures become reproducible tests</span></div>
+  </div>
+  <p class="lede" style="font-size:20px;margin-top:var(--s3)"><span class="tag ok">Solid</span> built and demonstrable &nbsp; <span class="tag neutral">Dashed</span> plan only</p>
+  <div class="footer"><span>Two sandbox apps: a RAG assistant and a tool-using agent, each clean and seeded with defects</span><span>3 / 12</span></div>
+</section>
+
+<!-- 4 -->
+<section class="slide" data-notes="The key requirement: a manual prompt list is not enough. Tests are generated from the risk text, the app's own documents and earlier failures. We checked that a different scenario or a prior failure changes the tests. Be upfront that the default generator is a labelled simulation; a real tester model is optional.">
+  <h2>Tests are derived from the risk, the sources and past failures</h2>
+  <div class="body">
+    <div class="col"><h3>Inputs</h3><ul>
+      <li>Your <b>risk scenario</b> and OWASP category</li><li>The app's <b>own source documents</b></li><li><b>Previous failures</b> from an earlier run</li></ul></div>
+    <div class="col"><h3>Test styles generated</h3><ul>
+      <li>Direct question · false premise</li><li>Pressure · injection-wrapped</li><li>Every test carries a <b>verbatim source quote</b></li></ul></div>
+  </div>
+  <div class="note"><b>Honest label:</b> the default generator is a deterministic stand-in, shown as SIMULATED. A real tester model can draft tests; every draft passes the same quote check.</div>
+  <div class="footer"><span>Verified by tests: a different scenario, category or prior failure changes the generated tests</span><span>4 / 12</span></div>
+</section>
+
+<!-- 5 -->
+<section class="slide" data-notes="Left is what we actually verify, right is what we do not. We would rather show the limit than hide it. Free-text hallucination judging is the main gap.">
+  <h2>What we verify, and what we do not</h2>
+  <div class="body">
+    <div class="col"><h3><span class="ok">Checked</span></h3><ul>
+      <li>Citation ids exist in the corpus</li><li>The expected source was cited</li><li>No <b>invented numbers</b>: each comes from the retrieved context or the question</li><li>The correct figure is stated</li></ul></div>
+    <div class="col"><h3><span class="bad">Not checked</span></h3><ul>
+      <li>Free-text unsupported claims</li><li>Semantic entailment (adapters exist, not wired in)</li><li>Bias and toxicity</li></ul>
+      <div class="note">A correct answer that quotes the user's wrong number is not a fabrication. Agreeing with the wrong number is caught by the expected-figure check.</div></div>
+  </div>
+  <div class="footer"><span>Runs that error are missing evidence, never counted as failures</span><span>5 / 12</span></div>
+</section>
+
+<!-- 6 -->
+<section class="slide" data-notes="Verdicts come from outcome oracles in a sandbox: a canary reaching a sink, a state change, a forbidden tool call. Never from a model saying blocked. On the tool-agent seeded app, the adaptive attacker breached 8 of 9 pairs and the static one 5 of 9. The intervals are wide and the pairs were developed knowing the seeded apps, so this is a plumbing check, not a held-out result.">
+  <h2>12 attack pairs, judged by oracles, not opinions</h2>
+  <div class="body">
+    <div class="col"><h3>Surfaces</h3><ul>
+      <li>Direct and indirect injection</li><li>RAG poisoning · tool misuse</li><li>Memory poisoning</li>
+      <li class="soft">Oracles: canary at a sink, state change, forbidden tool call</li></ul></div>
+    <div class="col"><h3>Tool agent, seeded app: pairs breached within 8 attempts</h3>
+      <div class="barrow"><p>Static attacker: <b>5 of 9</b></p><svg class="ib" data-k="5" data-n="9" data-lo="21.2" data-hi="86.3"></svg></div>
+      <div class="barrow"><p>Adaptive attacker: <b>8 of 9</b></p><svg class="ib" data-k="8" data-n="9" data-lo="51.8" data-hi="99.7"></svg></div>
+      <p class="soft" style="font-size:16px">Bars show the 95% interval. Simulated sandbox; a plumbing check, not a held-out evaluation.</p></div>
+  </div>
+  <div class="footer"><span>The clean control app: 0 breaches</span><span>6 / 12</span></div>
+</section>
+
+<!-- 7 -->
+<section class="slide" data-notes="Each failure gets a location and the rule that fired, and unknown is an allowed answer. A failing test is minimised, then admitted to the regression suite only if it reproduces on the defective app and passes on the clean one. In real-model mode we skip regression because it needs a measured flake rate.">
+  <h2>Every failure is located, evidenced and turned into a test</h2>
+  <div class="body">
+    <div class="col"><h3>Classify</h3><ul>
+      <li>Location: retrieval, guardrail, generation, memory… or <b>unknown</b></li><li>The rule that fired and the evidence key</li><li>Access level shown: we cannot localise below it</li></ul></div>
+    <div class="col"><h3>Regress</h3><ul>
+      <li><b>Minimise</b> the failing test</li><li>Admit only if it <b>reproduces</b> on the defect and <b>passes</b> on the clean app</li><li>Lineage kept back to the original failure</li></ul></div>
+  </div>
+  <div class="footer"><span>Regression is skipped in real-model mode: it needs a measured flake rate</span><span>7 / 12</span></div>
+</section>
+
+<!-- 8 -->
+<section class="slide" data-notes="This is the heart of honesty. A rate is always an interval against the policy line. Here two of six evaluable citation checks failed; the interval runs from 4.3 to 77.7 percent, which straddles the example tolerance of 10 percent, so the evidence cannot settle it. Insufficient evidence is a valid decision, not an error. The appetite is an example, not a recommendation.">
+  <h2>Every rate is an interval, and "insufficient evidence" is an answer</h2>
+  <div class="body">
+    <div class="col"><h3>Example: RAG seeded app, citation validity</h3>
+      <div class="barrow"><p><b>2 of 6</b> evaluable cases failed</p><svg class="ib" id="appetiteBar" data-k="2" data-n="6" data-lo="4.3" data-hi="77.7" data-line="10"></svg></div>
+      <p style="font-size:20px;line-height:1.4">The interval straddles the policy line, so the evidence cannot settle it.</p>
+      <p class="soft" style="font-size:16px;margin-top:8px">Example policy: 10% tolerance is illustrative, not a recommendation.</p></div>
+    <div class="col"><h3>No composite score</h3><ul>
+      <li>Any weighting would be an invented number</li><li>Per-metric intervals instead</li><li>A "claims not made" block is always shown</li></ul></div>
+  </div>
+  <div class="states">
+    <div class="state ok">Release<span>every interval inside the line</span></div>
+    <div class="state warn">Conditional<span>only if listed conditions hold</span></div>
+    <div class="state bad">Reject<span>an interval wholly above the line</span></div>
+    <div class="state neutral">Insufficient<span>evidence cannot decide</span></div>
+  </div>
+  <div class="footer"><span>A human signs off before any release</span><span>8 / 12</span></div>
+</section>
+
+<!-- 9 -->
+<section class="slide" data-notes="Show this live. Every result is an event in a hash chain. We regenerate the report byte for byte, and edit one stored event in a copy to show the chain catches it. Models can only write drafts; evidence, verdicts and decisions are written by deterministic code; sign-off is a human-only event.">
+  <h2>Evidence you can check, not just trust</h2>
+  <div class="body">
+    <div class="col"><h3>Tamper-evident ledger</h3><ul>
+      <li>Hash-chained, append-only</li><li>Report regenerates <b>byte-for-byte</b></li><li>Edit one stored event: <b>detected</b></li></ul></div>
+    <div class="col"><h3>Who may write what</h3><ul>
+      <li>Models write <b>drafts only</b></li><li>Evidence, verdicts and decisions: deterministic code</li><li>Sign-off: <b>humans only</b></li></ul></div>
+  </div>
+  <div class="note"><b>Known limit:</b> the ledger is not signed. Someone with write access to the file could forge a consistent chain; an external anchor would be needed.</div>
+  <div class="footer"><span>One command checks all of this against the ledgers: 23 of 23 checks passed on a simulated scenario</span><span>9 / 12</span></div>
+</section>
+
+<!-- 10 -->
+<section class="slide" data-notes="This answers benchmark the LLM itself, not a specific app. Pick any models, simulated references or real OpenRouter ids. The same generated suite runs on each. We claim a difference only when two intervals do not overlap, and with small suites they usually overlap, which the dashboard says plainly. Calls that fail on rate limits are shown as missing evidence.">
+  <h2>Compare any models on the same generated suite</h2>
+  <div class="body">
+    <div class="col"><h3>Suite and metrics</h3><ul>
+      <li>Grounded, false-premise, unanswerable, injection tests</li><li><b>Faithfulness · accuracy · abstention · injection resistance · consistency</b></li><li>Each model gets the same tests</li></ul></div>
+    <div class="col"><h3>Reading the result</h3><ul>
+      <li>Side-by-side intervals</li><li>A difference is claimed only if intervals <b>do not overlap</b></li><li>Rate-limited calls = <b>missing evidence</b></li></ul></div>
+  </div>
+  <div class="note"><b>Honest label:</b> it has run on simulated reference models. Real models are supported through OpenRouter but a full real-model benchmark is not yet validated.</div>
+  <div class="footer"><span>Paced calls, a call cap, and a free-model rule keep spend at zero by default</span><span>10 / 12</span></div>
+</section>
+
+<!-- 11 -->
+<section class="slide" data-notes="Be direct about the limits. Detection accuracy against human labels is not measured. Our first real-model run failed the clean control because of bugs in our own checks; the control caught them, we fixed them, added regression tests, and could not re-run live because the free quota ran out. We changed one check after seeing the control fail, so it is not pre-registered.">
+  <h2>What is verified, and what we are not claiming</h2>
+  <div class="stats">
+    <div class="stat"><div class="big">595</div><div class="bigcap">automated tests pass; lint and strict type checks clean</div></div>
+    <div class="stat"><div class="big">23 / 23</div><div class="bigcap">ledger, replay, tamper, control and provenance checks (simulated scenario)</div></div>
+    <div class="stat"><div class="big">0</div><div class="bigcap">false alarms on the clean control app (simulated)</div></div>
+  </div>
+  <div class="body" style="margin-top:var(--s3)">
+    <div class="col"><h3><span class="bad">Not claimed</span></h3><ul>
+      <li>Detection or grounding <b>accuracy</b>: not measured against labels</li><li>Free-text hallucination detection</li><li>Real-model results: the first run failed our own control; fixed, not re-validated live</li></ul></div>
+    <div class="col"><h3><span class="warn">Be aware</span></h3><ul>
+      <li>Samples are small: intervals are wide</li><li>Generation and apps are simulated by default</li><li>One check was changed after seeing the control fail</li></ul></div>
+  </div>
+  <div class="footer"><span>Source: test runs and the jury verifier on this repository</span><span>11 / 12</span></div>
+</section>
+
+<!-- 12 -->
+<section class="slide" data-notes="Be modest about novelty: test generation, red teaming and release recommendations exist elsewhere and we did not benchmark against those tools. What we can show live is the auditable ledger, intervals everywhere, a built-in control, and models that can only propose. Next steps are what the jury will ask for.">
+  <h2>Auditable, honest about uncertainty, and built to be checked</h2>
+  <div class="body">
+    <div class="col"><h3>What is different</h3><ul>
+      <li>Replayable, <b>tamper-evident</b> evidence</li><li>Intervals everywhere; <b>insufficient evidence</b> allowed</li><li>A built-in <b>clean control</b> for false alarms</li><li>Models propose; deterministic code decides</li><li>No invented composite score</li></ul></div>
+    <div class="col"><h3>Next</h3><ul>
+      <li>Point it at <b>your own app</b> and policy file</li><li>Measure accuracy against human labels</li><li>Free-text grounding with entailment</li><li>Validate real-model runs; run monitoring</li></ul></div>
+  </div>
+  <div class="footer"><span>We did not benchmark against other tools; generation and red teaming exist elsewhere</span><span>12 / 12</span></div>
+</section>
+
+</div>
+<div class="hint">← → or space to move · N for speaker notes · F for full screen · print to PDF for handouts</div>
+<div class="notes-panel" id="notes"></div>
+
+<script>
+const slides = [...document.querySelectorAll('.slide')], total = slides.length;
+let cur = 0;
+const stage = document.getElementById('stage');
+function fit() { const s = Math.min(innerWidth / 1280, innerHeight / 720); stage.style.transform = `translate(-50%, -50%) scale(${s})`; }
+function show(n) {
+  cur = Math.max(0, Math.min(total - 1, n));
+  slides.forEach((s, i) => s.classList.toggle('active', i === cur));
+  document.getElementById('progress').style.width = ((cur + 1) / total * 100) + '%';
+  document.getElementById('notes').textContent = slides[cur].dataset.notes || '';
+  history.replaceState(null, '', '#' + (cur + 1));
+}
+// Interval bars drawn from data attributes (exact intervals, axis 0 to 100%).
+document.querySelectorAll('svg.ib').forEach(svg => {
+  const k = +svg.dataset.k, n = +svg.dataset.n, lo = +svg.dataset.lo, hi = +svg.dataset.hi, line = svg.dataset.line;
+  const W = 560, x = v => 10 + v / 100 * (W - 20), NS = 'http://www.w3.org/2000/svg';
+  svg.setAttribute('viewBox', `0 0 ${W} 64`); svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${k} of ${n}, 95% interval ${lo}% to ${hi}%` + (line ? `, tolerance ${line}%` : ''));
+  const mk = (t, a, txt) => { const e = document.createElementNS(NS, t); for (const [kk, v] of Object.entries(a)) e.setAttribute(kk, v); if (txt) e.textContent = txt; svg.append(e); };
+  mk('line', { class: 'axis', x1: x(0), x2: x(100), y1: 30, y2: 30 });
+  mk('rect', { class: 'range', x: x(lo), y: 21, width: x(hi) - x(lo), height: 18 });
+  mk('circle', { class: 'pt', cx: x(k / n * 100), cy: 30, r: 6 });
+  if (line) { mk('line', { class: 'line', x1: x(+line), x2: x(+line), y1: 8, y2: 48 }); mk('text', { class: 'lab', x: x(+line) + 6, y: 12 }, `tolerance ${line}%`); }
+  mk('text', { x: x(0), y: 62 }, '0%'); mk('text', { x: x(100), y: 62, 'text-anchor': 'end' }, '100%');
+  mk('text', { x: x(lo), y: 62, 'text-anchor': 'middle' }, `${lo}%`); mk('text', { x: x(hi), y: 62, 'text-anchor': 'middle' }, `${hi}%`);
+});
+addEventListener('resize', fit);
+addEventListener('keydown', e => {
+  if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) { e.preventDefault(); show(cur + 1); }
+  else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); show(cur - 1); }
+  else if (e.key === 'Home') show(0); else if (e.key === 'End') show(total - 1);
+  else if (e.key === 'n' || e.key === 'N') document.getElementById('notes').classList.toggle('show');
+  else if (e.key === 'f' || e.key === 'F') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+});
+addEventListener('click', e => { if (e.target.closest('.notes-panel')) return; show(e.clientX < innerWidth / 3 ? cur - 1 : cur + 1); });
+fit(); show((parseInt(location.hash.slice(1)) || 1) - 1);
+</script>
+</body>
+</html>
