@@ -1,148 +1,114 @@
-"""T2.4 coverage report and estimate-event schemas consumed by the viewer.
+"""Risk-register coverage report (T2.4) incl. UNCOVERED cells.
 
-Both estimates are written as ESTIMATE_COMPUTED events by deterministic code:
-
-* kind "risk_coverage": risk-register cells vs executed VALID tests, explicit UNCOVERED cells.
-  Structural (app-model edge) coverage is LOGGED ONLY (H3: no claim that it predicts anything).
-* kind "invalid_test_rate": exact interval from human-labelled audit rows.
-
-Each payload also carries `metric` (same value as `kind`) and viewer-style keys (`cells[].cell,
-covered, n_tests`; `k`, `n`, `point`, `lower`, `upper`) so existing readers keep working.
+A cell is a proposed risk (taxonomy id x app component). Statuses:
+  COVERED               >= 1 drafted test judged valid by the Skeptic (a proposal, not human truth)
+  DRAFTED_NOT_VALIDATED tests exist but none judged valid
+  UNCOVERED             no drafted test
+Taxonomy ids with no proposed risk are listed as UNASSESSED (never silently "fine").
+Structural coverage (nodes/edges of the app model exercised by run traces) is only LOGGED (H3):
+nothing here claims it predicts defect detection.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import Literal
+from collections.abc import Mapping, Sequence
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict
 
 from qe.core.events import Event, EventType, ProducerKind
-from qe.core.ids import content_id
 from qe.core.ledger import Entry, Ledger
-from qe.core.schemas import Frozen, RunRecord
-from qe.model.builder import AppModel, run_edges
-from qe.risk.register import RiskRegister
-
-PRODUCER = "p3_coverage"
-STRUCTURAL_KINDS = ("retrieval", "tool_call", "handoff")
-STRUCTURAL_NOTE = "logged only (H3): structural coverage is not claimed to predict defect finding"
+from qe.core.schemas import Span, TestCase
+from qe.model.app_model import AppModel, build_from_traces
+from qe.risk.register import RiskProposal
+from qe.risk.taxonomy import Taxonomy
 
 
-class CellCoverage(Frozen):
-    cell_id: str
-    cell: str  # same as cell_id (viewer-style key)
-    status: Literal["COVERED", "UNCOVERED"]
-    covered: bool
-    n_tests: int  # executed valid tests in this cell
-    test_ids: tuple[str, ...]
+class Cell(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    risk_id: str
+    taxonomy_id: str
+    component: str
+    n_drafted: int
+    n_valid: int
+    status: str
 
 
-class KindCoverage(Frozen):
-    kind: str
-    hit: int
-    total: int
+class Structural(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    label: str = "logged_not_validated_H3"
+    nodes_total: int
+    nodes_exercised: int
+    edges_total: int
+    edges_exercised: int
 
 
-class RiskCoverageEstimate(Frozen):
-    kind: Literal["risk_coverage"] = "risk_coverage"
-    metric: Literal["risk_coverage"] = "risk_coverage"
-    register_id: str
-    n_cells: int
-    n_covered: int
-    n_uncovered: int
-    uncovered_cells: tuple[str, ...]
-    cells: tuple[CellCoverage, ...]
-    structural: tuple[KindCoverage, ...] = ()
-    structural_note: str = STRUCTURAL_NOTE
+class CoverageReport(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    taxonomy: str
+    cells: tuple[Cell, ...]
+    unassessed_taxonomy_ids: tuple[str, ...]
+    components_without_risk: tuple[str, ...]
+    n_tests: int
+    n_skeptic_valid: int
+    structural: Structural
 
 
-class InvalidTestRateEstimate(Frozen):
-    kind: Literal["invalid_test_rate"] = "invalid_test_rate"
-    metric: Literal["invalid_test_rate"] = "invalid_test_rate"
-    k: int  # tests labelled invalid
-    n: int  # tests labelled (valid + invalid + ambiguous)
-    n_ambiguous: int
-    point: float = Field(allow_inf_nan=False)
-    lower: float = Field(allow_inf_nan=False)
-    upper: float = Field(allow_inf_nan=False)
-    confidence: float
-    method: str = "clopper_pearson"
-    strata: dict[str, dict[str, int]]  # stratum -> {n, k}
-    sampling: str
-    synthetic: bool  # True when labels came from the synthetic auto-labeller (pipeline test only)
-
-
-def compute_risk_coverage(
-    register: RiskRegister,
-    test_cells: Mapping[str, str | None],
-    validity: Mapping[str, str],
-    executed: Iterable[str],
-    model: AppModel | None = None,
-    valid_runs: Iterable[RunRecord] = (),
-) -> RiskCoverageEstimate:
-    """A cell is COVERED iff >=1 test assigned to it is valid AND was executed."""
-    executed_set = set(executed)
-    by_cell: dict[str, list[str]] = {c: [] for c in register.cell_ids()}
-    for tid, cell in sorted(test_cells.items()):
-        if cell in by_cell and validity.get(tid) == "valid" and tid in executed_set:
-            by_cell[cell].append(tid)
-    cells = tuple(
-        CellCoverage(
-            cell_id=c, cell=c, status="COVERED" if ids else "UNCOVERED", covered=bool(ids),
-            n_tests=len(ids), test_ids=tuple(ids),
-        )
-        for c, ids in sorted(by_cell.items())
-    )
-    uncovered = tuple(c.cell_id for c in cells if not c.covered)
-    return RiskCoverageEstimate(
-        register_id=register.register_id, n_cells=len(cells),
-        n_covered=len(cells) - len(uncovered), n_uncovered=len(uncovered),
-        uncovered_cells=uncovered, cells=cells,
-        structural=structural_coverage(model, valid_runs) if model else (),
+def build_coverage(
+    taxonomy: Taxonomy,
+    risks: Sequence[RiskProposal],
+    tests: Sequence[TestCase],
+    assessments: Mapping[str, str],
+    model: AppModel,
+    run_traces: Sequence[Sequence[Span]],
+) -> CoverageReport:
+    cells: list[Cell] = []
+    for r in sorted(risks, key=lambda r: r.risk_id):
+        mine = [t for t in tests if t.risk_cell == r.risk_id]
+        valid = sum(1 for t in mine if assessments.get(t.id) == "valid")
+        status = "COVERED" if valid else ("DRAFTED_NOT_VALIDATED" if mine else "UNCOVERED")
+        cells.append(Cell(risk_id=r.risk_id, taxonomy_id=r.taxonomy_id, component=r.component,
+                          n_drafted=len(mine), n_valid=valid, status=status))
+    seen = build_from_traces(run_traces)
+    seen_edges = {(e.src, e.dst) for e in seen.edges}
+    model_edges = {(e.src, e.dst) for e in model.edges}
+    return CoverageReport(
+        taxonomy=taxonomy.taxonomy,
+        cells=tuple(cells),
+        unassessed_taxonomy_ids=tuple(sorted(taxonomy.ids() - {r.taxonomy_id for r in risks})),
+        components_without_risk=tuple(
+            sorted(model.node_ids() - {r.component for r in risks})
+        ),
+        n_tests=len(tests),
+        n_skeptic_valid=sum(1 for t in tests if assessments.get(t.id) == "valid"),
+        structural=Structural(
+            nodes_total=len(model.nodes),
+            nodes_exercised=len(model.node_ids() & seen.node_ids()),
+            edges_total=len(model_edges),
+            edges_exercised=len(model_edges & seen_edges),
+        ),
     )
 
 
-def structural_coverage(model: AppModel, runs: Iterable[RunRecord]) -> tuple[KindCoverage, ...]:
-    """Fraction of model edges (retrieval / tool_call / handoff) traversed by the given runs."""
-    hit: set[tuple[str, str, str]] = set()
-    for run in runs:
-        hit |= run_edges(run.spans)
-    out = []
-    for kind in STRUCTURAL_KINDS:
-        edges = {(e.src, e.dst, e.kind) for e in model.edges if e.kind == kind}
-        out.append(KindCoverage(kind=kind, hit=len(edges & hit), total=len(edges)))
-    return tuple(out)
+def render_markdown(rep: CoverageReport) -> str:
+    out = [f"# Coverage report ({rep.taxonomy})", "",
+           "Statuses use Skeptic verdicts (proposals), not human-audited validity.", "",
+           "| risk | taxonomy | component | drafted | skeptic-valid | status |",
+           "|---|---|---|---|---|---|"]
+    out += [f"| {c.risk_id} | {c.taxonomy_id} | {c.component} | {c.n_drafted} | {c.n_valid} "
+            f"| {c.status} |" for c in rep.cells]
+    unassessed = ", ".join(rep.unassessed_taxonomy_ids) or "none"
+    out += ["", f"UNASSESSED taxonomy ids (no risk proposed): {unassessed}",
+            f"Components without any risk: {', '.join(rep.components_without_risk) or 'none'}",
+            "", f"Structural ({rep.structural.label}; logged, not a claim): "
+            f"nodes {rep.structural.nodes_exercised}/{rep.structural.nodes_total}, "
+            f"edges {rep.structural.edges_exercised}/{rep.structural.edges_total}", ""]
+    return "\n".join(out)
 
 
-def coverage_from_ledger(
-    ledger: Ledger, register: RiskRegister, model: AppModel | None = None
-) -> RiskCoverageEstimate:
-    test_cells: dict[str, str | None] = {}
-    validity: dict[str, str] = {}
-    runs: dict[str, list[RunRecord]] = {}
-    for e in ledger.entries():
-        p, t = e.event.payload, e.event.type
-        if t is EventType.TEST_DRAFTED:
-            case = p["test_case"]
-            test_cells[case["id"]] = case.get("risk_cell")
-        elif t is EventType.VALIDITY_VERDICT:
-            validity[p["test_id"]] = p["validity"]  # latest verdict wins
-        elif t is EventType.RUN_RECORDED:
-            run = RunRecord.model_validate(p)
-            runs.setdefault(run.test_case_id, []).append(run)
-    valid_runs = [r for tid, rs in runs.items() if validity.get(tid) == "valid" for r in rs]
-    return compute_risk_coverage(register, test_cells, validity, runs, model, valid_runs)
+def record_coverage(ledger: Ledger, rep: CoverageReport) -> Entry:
+    from qe.core.ids import content_id
 
-
-def record_estimate(ledger: Ledger, estimate: Frozen) -> Entry:
-    """Append an estimate as a deterministic ESTIMATE_COMPUTED event (idempotent by content)."""
-    payload = estimate.model_dump(mode="json")
-    key = f"estimate:{payload['kind']}:{content_id(payload)[:24]}"
-    existing = ledger.find_by_key(key)
-    if existing is not None:
-        return existing
-    return ledger.append(
-        Event(key=key, type=EventType.ESTIMATE_COMPUTED, producer=PRODUCER,
-              producer_kind=ProducerKind.DETERMINISTIC, payload=payload)
-    )
+    payload = {"kind": "coverage_report", **rep.model_dump(mode="json")}
+    return ledger.append(Event(key=f"coverage:{content_id(payload)}",
+                               type=EventType.EVIDENCE_RECORDED, producer="qe.risk.coverage",
+                               producer_kind=ProducerKind.DETERMINISTIC, payload=payload))

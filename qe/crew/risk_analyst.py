@@ -1,97 +1,73 @@
-"""Risk Analyst (LLM, taxonomy-constrained). Proposals only; ranking is the Planner's job."""
+"""Risk Analyst (T2.2): LLM proposes, taxonomy + app model constrain, policy code ranks."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Any
+
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from qe.core.events import EventType
+from qe.core.ids import content_id
 from qe.core.ledger import Ledger
-from qe.crew.llm import LLMClient
-from qe.crew.prompt_store import Prompt, load_prompt
-from qe.crew.record import record_crew_event
-from qe.model.builder import AppModel
-from qe.risk.register import RiskItem
-from qe.risk.taxonomy import Taxonomy, allowed_ids
-
-PROMPT_NAME = "risk_analyst_v1"
-PRODUCER = "risk_analyst"
-APP_COMPONENT = "app"
+from qe.crew.llm import CrewLLM
+from qe.crew.parse import parse_json_list
+from qe.crew.prompts import load_prompt
+from qe.crew.recording import record_draft
+from qe.model.app_model import AppModel
+from qe.risk.register import RiskProposal
+from qe.risk.taxonomy import Taxonomy
 
 
-@dataclass(frozen=True)
-class Rejection:
-    proposal: dict[str, Any]
-    reason: str
+class RiskResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    accepted: tuple[RiskProposal, ...] = ()
+    rejected: tuple[tuple[str, str], ...] = ()  # (taxonomy_id/component, reason)
+    parse_error: str | None = None
 
 
-@dataclass(frozen=True)
-class RiskProposals:
-    accepted: tuple[RiskItem, ...]
-    rejected: tuple[Rejection, ...]
-
-
-def _parse(raw: str) -> list[Any]:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    risks = data.get("risks") if isinstance(data, dict) else None
-    return risks if isinstance(risks, list) else []
-
-
-def _check(
-    p: Any, allowed: frozenset[str], components: frozenset[str]
-) -> tuple[RiskItem | None, str]:
-    if not isinstance(p, dict):
-        return None, "proposal is not an object"
-    category, component = p.get("category"), p.get("component", APP_COMPONENT)
-    if not isinstance(category, str) or category not in allowed:
-        return None, "category not in taxonomy"
-    if not isinstance(component, str) or component not in components:
-        return None, "component not in app model"
-    item = RiskItem(category=category, component=component, rationale=str(p.get("rationale", "")))
-    return item, ""
-
-
-def propose_risks(
-    llm: LLMClient,
-    model: AppModel,
-    taxonomies: tuple[Taxonomy, ...],
-    ledger: Ledger | None = None,
-    prompt: Prompt | None = None,
-) -> RiskProposals:
-    """Ask the LLM for risks; keep only proposals whose category is in the taxonomy."""
-    prompt = prompt or load_prompt(PROMPT_NAME)
-    allowed = allowed_ids(taxonomies)
-    components = frozenset({APP_COMPONENT, *(n.id for n in model.nodes)})
+async def propose_risks(
+    llm: CrewLLM, model: AppModel, taxonomy: Taxonomy, ledger: Ledger
+) -> RiskResult:
+    prompt = load_prompt("risk_analyst")
     user = json.dumps(
-        {
-            "model": {
-                "nodes": [n.id for n in model.nodes],
-                "edges": [[e.src, e.dst, e.kind] for e in model.edges],
-            },
-            "taxonomy": sorted(allowed),
-        },
+        {"components": sorted(model.node_ids()), "taxonomy": sorted(taxonomy.ids())},
         sort_keys=True,
     )
-    raw = llm.complete(
-        [{"role": "system", "content": prompt.text}, {"role": "user", "content": user}]
-    )
-    accepted: list[RiskItem] = []
-    rejected: list[Rejection] = []
-    for p in _parse(raw):
-        item, reason = _check(p, allowed, components)
-        if item is None:
-            rejected.append(Rejection(p if isinstance(p, dict) else {"raw": str(p)}, reason))
+    raw = await llm.complete(prompt.text, user)
+    run_key = content_id([prompt.sha256, llm.model.model_dump(mode="json"), user])
+    try:
+        items = parse_json_list(raw)
+    except ValueError as exc:
+        record_draft(ledger, EventType.NARRATIVE_DRAFTED, f"risk-parse:{run_key}",
+                     {"status": "unparseable", "error": str(exc)}, prompt, llm.model, raw)
+        return RiskResult(parse_error=str(exc))
+    accepted: list[RiskProposal] = []
+    rejected: list[tuple[str, str]] = []
+    for item in items:
+        tid, comp = str(item.get("taxonomy_id", "")), str(item.get("component", ""))
+        label = f"{tid}/{comp}"
+        reason: str | None = None
+        proposal: RiskProposal | None = None
+        if tid not in taxonomy.ids():
+            reason = f"taxonomy_id not in {taxonomy.taxonomy}"
+        elif comp not in model.node_ids():
+            reason = "component not in app model"
         else:
-            accepted.append(item)
-    if ledger is not None:
-        for item in accepted:
-            body = {"status": "accepted", **item.model_dump(mode="json")}
-            record_crew_event(ledger, EventType.RISK_PROPOSED, PRODUCER, body, prompt=prompt, llm=llm)
-        for rej in rejected:
-            body = {"status": "rejected", "reason": rej.reason, "proposal": rej.proposal}
-            record_crew_event(ledger, EventType.RISK_PROPOSED, PRODUCER, body, prompt=prompt, llm=llm)
-    return RiskProposals(tuple(accepted), tuple(rejected))
+            try:
+                proposal = RiskProposal(
+                    risk_id="R-" + content_id([tid, comp])[:10], taxonomy_id=tid, component=comp,
+                    rationale=str(item.get("rationale", "")),
+                )
+            except ValidationError:
+                reason = "empty field"
+        payload = {"status": "accepted" if proposal else "rejected", "item": item,
+                   "taxonomy": taxonomy.taxonomy, "taxonomy_sha256": taxonomy.sha256}
+        if reason:
+            payload["reason"] = reason
+        record_draft(ledger, EventType.RISK_PROPOSED, f"risk:{run_key}:{content_id(item)}",
+                     payload, prompt, llm.model, raw)
+        if proposal and proposal not in accepted:
+            accepted.append(proposal)
+        elif reason:
+            rejected.append((label, reason))
+    return RiskResult(accepted=tuple(accepted), rejected=tuple(rejected))

@@ -1,110 +1,123 @@
-"""`qe audit` core: seeded stratified sampling of drafted tests for human labelling (CSV out/in)
-and the invalid-test rate with an exact interval computed from labelled rows.
+"""Human audit sampling and invalid-test-rate measurement (T2.3).
 
-Sampling is proportional allocation across strata (risk cells) with seeded within-stratum draws.
-The pooled interval treats labelled rows as a simple random sample; under proportional allocation
-that is an approximation (documented in ADR-0004-p3).
+The sample is a simple random sample of drafted tests, blind to Skeptic verdicts, so the
+invalid-test rate is an unbiased estimate for the sampled population (exact CP interval).
+Machine-rejected drafts (failed deterministic gates) are NOT in the population; count them
+separately via `machine_rejected`.
 """
 
 from __future__ import annotations
 
-import csv
-import io
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from qe.core.events import EventType
-from qe.core.ledger import Ledger
-from qe.core.schemas import Frozen
-from qe.risk.coverage import InvalidTestRateEstimate
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from qe.core.events import Event, EventType, ProducerKind
+from qe.core.ledger import Entry, Ledger
+from qe.core.schemas import TestCase
+from qe.crew.skeptic import Assessment
 from qe.stats.intervals import clopper_pearson
 
-COLUMNS = ("test_id", "stratum", "question", "oracle_source", "expected_span",
-           "human_label", "label_source", "notes")
 LABELS = ("valid", "invalid", "ambiguous")
-SYNTHETIC_SOURCE = "synthetic_autolabel"
-SAMPLING = "proportional-stratified-by-risk-cell, seeded"
 
 
-class AuditItem(Frozen):
+class AuditItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    test: TestCase
+    source_text: str
+
+
+class AuditLabel(BaseModel):
+    model_config = ConfigDict(frozen=True)
     test_id: str
-    stratum: str
-    question: str
-    oracle_source: str
-    expected_span: str
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def _known(cls, v: str) -> str:
+        if v not in LABELS:
+            raise ValueError(f"label must be one of {LABELS}")
+        return v
 
 
-def items_from_ledger(ledger: Ledger) -> list[AuditItem]:
-    out: dict[str, AuditItem] = {}
+class RateEstimate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    k: int
+    n: int
+    lower: float
+    upper: float
+    confidence: float = 0.95
+
+    @property
+    def point(self) -> float:
+        return self.k / self.n
+
+
+def _rate(k: int, n: int) -> RateEstimate:
+    if n <= 0:
+        raise ValueError("no labelled items")
+    lo, hi = clopper_pearson(k, n)
+    return RateEstimate(k=k, n=n, lower=lo, upper=hi)
+
+
+def drafted_tests(ledger: Ledger) -> list[AuditItem]:
+    items = []
     for e in ledger.entries():
-        if e.event.type is not EventType.TEST_DRAFTED:
-            continue
         p = e.event.payload
-        case = p["test_case"]
-        out[case["id"]] = AuditItem(
-            test_id=case["id"], stratum=str(case.get("risk_cell") or "unassigned"),
-            question=str(case["input"].get("input", "")), oracle_source=case["oracle_source"],
-            expected_span=str(p.get("expected_span") or ""),
-        )
-    return [out[k] for k in sorted(out)]
+        if e.event.type is EventType.TEST_DRAFTED and p.get("status") == "drafted":
+            items.append(AuditItem(test=TestCase.model_validate(p["test"]),
+                                   source_text=str(p["source_text"])))
+    return items
 
 
-def _allocate(sizes: dict[str, int], n: int) -> dict[str, int]:
-    total = sum(sizes.values())
-    shares = {k: n * v / total for k, v in sizes.items()}
-    alloc = {k: int(s) for k, s in shares.items()}
-    for k in sorted(shares, key=lambda k: (-(shares[k] - alloc[k]), k))[: n - sum(alloc.values())]:
-        alloc[k] += 1
-    return alloc
-
-
-def sample(items: Sequence[AuditItem], n: int, seed: int) -> list[AuditItem]:
-    if n < 1 or n > len(items):
-        raise ValueError(f"n must be in [1, {len(items)}]")
-    strata: dict[str, list[AuditItem]] = {}
-    for it in sorted(items, key=lambda i: i.test_id):
-        strata.setdefault(it.stratum, []).append(it)
-    alloc = _allocate({k: len(v) for k, v in strata.items()}, n)
-    picked: list[AuditItem] = []
-    for k in sorted(strata):
-        rng = random.Random(f"{seed}:{k}")
-        picked += rng.sample(strata[k], min(alloc[k], len(strata[k])))
-    return sorted(picked, key=lambda i: i.test_id)
-
-
-def to_csv(items: Sequence[AuditItem]) -> str:
-    """Blind sheet: no skeptic verdict is included, labellers decide independently."""
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=COLUMNS, lineterminator="\n")
-    w.writeheader()
-    for it in items:
-        w.writerow({**it.model_dump(), "human_label": "", "label_source": "", "notes": ""})
-    return buf.getvalue()
-
-
-def score(csv_text: str, confidence: float = 0.95) -> InvalidTestRateEstimate:
-    """Invalid-test rate (k invalid / n labelled) with an exact Clopper-Pearson interval."""
-    rows = list(csv.DictReader(io.StringIO(csv_text)))
-    n = k = amb = 0
-    strata: dict[str, dict[str, int]] = {}
-    synthetic = False
-    for i, row in enumerate(rows, start=2):
-        label = (row.get("human_label") or "").strip().lower()
-        if not label:
-            continue
-        if label not in LABELS:
-            raise ValueError(f"row {i}: label must be one of {LABELS}, got {label!r}")
-        synthetic = synthetic or (row.get("label_source") or "").strip() == SYNTHETIC_SOURCE
-        s = strata.setdefault(row.get("stratum", "unassigned"), {"n": 0, "k": 0})
-        n, s["n"] = n + 1, s["n"] + 1
-        if label == "invalid":
-            k, s["k"] = k + 1, s["k"] + 1
-        elif label == "ambiguous":
-            amb += 1
-    if n == 0:
-        raise ValueError("no labelled rows")
-    lo, hi = clopper_pearson(k, n, confidence)
-    return InvalidTestRateEstimate(
-        k=k, n=n, n_ambiguous=amb, point=k / n, lower=lo, upper=hi, confidence=confidence,
-        strata=strata, sampling=SAMPLING, synthetic=synthetic,
+def machine_rejected(ledger: Ledger) -> int:
+    return sum(
+        1
+        for e in ledger.entries()
+        if e.event.type is EventType.TEST_DRAFTED and e.event.payload.get("status") == "rejected"
     )
+
+
+def assessments(ledger: Ledger) -> dict[str, Assessment]:
+    out: dict[str, Assessment] = {}
+    for e in ledger.entries():
+        p = e.event.payload
+        if e.event.type is EventType.VALIDITY_VERDICT and p["test_id"] not in out:
+            out[p["test_id"]] = Assessment(test_id=p["test_id"], status=p["status"],
+                                           reason=p["reason"])
+    return out
+
+
+def sample(tests: Sequence[TestCase], n: int, seed: int) -> list[TestCase]:
+    pool = sorted(tests, key=lambda t: t.id)
+    return random.Random(seed).sample(pool, min(n, len(pool)))
+
+
+def record_labels(ledger: Ledger, labels: Sequence[AuditLabel], auditor: str) -> list[Entry]:
+    return [
+        ledger.append(Event(
+            key=f"audit:{lb.test_id}:{auditor}", type=EventType.SIGNOFF_RECORDED,
+            producer=f"human:{auditor}", producer_kind=ProducerKind.HUMAN,
+            payload={"kind": "audit_label", "test_id": lb.test_id, "label": lb.label,
+                     "auditor": auditor},
+        ))
+        for lb in labels
+    ]
+
+
+def invalid_rate(labels: Sequence[AuditLabel]) -> RateEstimate:
+    """Fraction of audited tests the human labelled invalid (ambiguous reported separately)."""
+    return _rate(sum(1 for lb in labels if lb.label == "invalid"), len(labels))
+
+
+def not_valid_rate(labels: Sequence[AuditLabel]) -> RateEstimate:
+    return _rate(sum(1 for lb in labels if lb.label != "valid"), len(labels))
+
+
+def skeptic_precision(
+    labels: Sequence[AuditLabel], assess: Mapping[str, Assessment]
+) -> RateEstimate:
+    """Among audited tests the Skeptic called valid, the fraction humans also called valid."""
+    called = [lb for lb in labels if lb.test_id in assess and assess[lb.test_id].status == "valid"]
+    return _rate(sum(1 for lb in called if lb.label == "valid"), len(called))

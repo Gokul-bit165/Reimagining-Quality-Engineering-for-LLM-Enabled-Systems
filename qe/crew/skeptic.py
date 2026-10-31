@@ -1,171 +1,101 @@
-"""T2.3 Skeptic: independent re-derivation of expected behaviour + validity verdicts.
+"""Skeptic (T2.3): independent re-derivation from the source document, never from the author.
 
-Deterministic checks decide; the LLM (a different model family from every author, seeing only the
-question and the documents, never the author's expected answer) can only add ambiguity flags.
-Precedence: invalid > ambiguous > redundant > valid.
+The Skeptic sees `SkepticInput` only (question + source text): no expected answer, no author
+rationale (R4). Its status is a PROPOSAL; truth about validity comes from the human audit.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
-from typing import Literal
+from collections.abc import Sequence
 
-from qe.core.events import EventType, ProducerKind
+from pydantic import BaseModel, ConfigDict
+
+from qe.core.events import EventType
+from qe.core.ids import content_id
 from qe.core.ledger import Ledger
-from qe.core.schemas import Frozen
-from qe.crew.authors import ABSTAIN_ORACLE, Draft
-from qe.crew.llm import LLMClient
-from qe.crew.prompt_store import Prompt, load_prompt
-from qe.crew.record import record_crew_event
-from qe.crew.text import best_sentence, jaccard, shingles
+from qe.core.schemas import TestCase
+from qe.crew.llm import CrewLLM
+from qe.crew.parse import parse_json_object
+from qe.crew.prompts import load_prompt
+from qe.crew.recording import record_draft
 
-PROMPT_NAME = "skeptic_v1"
-PRODUCER = "skeptic"
-Validity = Literal["valid", "invalid", "ambiguous", "redundant"]
-_WS = re.compile(r"\s+")
+_NUM = re.compile(r"\d+(?:[.,]\d+)?")
+_WORD = re.compile(r"[a-z0-9]+")
 
 
-class SkepticConfig(Frozen):
-    """Thresholds are explicit inputs (no built-in defaults decide)."""
-
-    near_dup_jaccard: float  # question word-3-shingle Jaccard at/above which a test is redundant
-    min_overlap_tokens: int  # content-token overlap at/above which docs are deemed to answer
-    example_only: bool = False
-
-    @classmethod
-    def example(cls) -> SkepticConfig:
-        """EXAMPLE values for tests and demos; not validated against human labels."""
-        return cls(near_dup_jaccard=0.8, min_overlap_tokens=2, example_only=True)
+class SkepticInput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    question: str
+    source_text: str
 
 
-class SkepticVerdict(Frozen):
+class Assessment(BaseModel):
+    model_config = ConfigDict(frozen=True)
     test_id: str
-    validity: Validity
-    reasons: tuple[str, ...]
-    llm_assisted: bool = False
+    status: str  # valid | invalid | ambiguous
+    reason: str
 
 
 def _norm(s: str) -> str:
-    return _WS.sub(" ", s).strip().lower()
+    return " ".join(_WORD.findall(s.lower()))
 
 
-def _deterministic_flags(
-    d: Draft, docs: Mapping[str, str], cfg: SkepticConfig
-) -> tuple[list[str], list[str]]:
-    """(invalid reasons, ambiguous reasons) from deterministic re-derivation."""
-    invalid: list[str] = []
-    ambiguous: list[str] = []
-    question = str(d.case.input.get("input", ""))
-    hit = best_sentence(question, docs)
-    if d.expects_abstain:
-        if d.expected_span is not None:
-            invalid.append("abstain_with_expected_span")
-        if hit is not None and hit[2] >= cfg.min_overlap_tokens:
-            invalid.append("unanswerable_but_docs_overlap")
-        return invalid, ambiguous
-    doc_id = d.case.oracle_source.removeprefix("source_of_truth:")
-    if d.case.oracle_source == ABSTAIN_ORACLE or doc_id not in docs:
-        invalid.append("source_missing")
-        return invalid, ambiguous
-    if d.expected_span is None:
-        invalid.append("missing_expected_span")
-        return invalid, ambiguous
-    if _norm(d.expected_span) not in _norm(docs[doc_id]):
-        invalid.append("span_not_in_source")
-        return invalid, ambiguous
-    if hit is None or hit[2] < cfg.min_overlap_tokens:
-        ambiguous.append("question_weakly_tied_to_source")
-    else:
-        if hit[3]:
-            ambiguous.append("question_matches_multiple_docs_equally")
-        if _norm(hit[1]) != _norm(d.expected_span) or hit[0] != doc_id:
-            ambiguous.append("rederived_answer_differs")
-    return invalid, ambiguous
+def answers_agree(expected: str, derived: str) -> bool:
+    """Numbers decide when present (sets must match); otherwise normalised containment."""
+    en, dn = set(_NUM.findall(expected)), set(_NUM.findall(derived))
+    if en or dn:
+        return en == dn
+    e, d = _norm(expected), _norm(derived)
+    return bool(e) and bool(d) and (e in d or d in e)
 
 
-def _llm_flags(
-    d: Draft, docs: Mapping[str, str], llm: LLMClient, prompt: Prompt
-) -> list[str]:
-    question = str(d.case.input.get("input", ""))
-    raw = llm.complete(
-        [
-            {"role": "system", "content": prompt.text},
-            {"role": "user", "content": json.dumps({"question": question, "docs": dict(docs)},
-                                                   sort_keys=True)},
-        ]
-    )
-    try:
-        span = json.loads(raw).get("answer_span")
-    except (json.JSONDecodeError, AttributeError):
-        return ["llm_output_unparseable"]
-    corpus = _norm(" ".join(docs.values()))
-    if span is not None and (not isinstance(span, str) or _norm(span) not in corpus):
-        return ["llm_output_not_verbatim"]  # untrusted claim, ignored for the decision
-    if d.expects_abstain:
-        return ["llm_answers_unanswerable"] if span is not None else []
-    if span is None:
-        return ["llm_cannot_answer"]
-    if d.expected_span is not None and _norm(span) != _norm(d.expected_span):
-        return ["llm_answer_differs"]
-    return []
-
-
-def _redundant_ids(drafts: Sequence[Draft], threshold: float) -> dict[str, str]:
-    """test id -> id of the earlier near-duplicate it repeats (earliest by id is kept)."""
-    ordered = sorted(drafts, key=lambda d: d.case.id)
-    sh = {d.case.id: shingles(str(d.case.input.get("input", ""))) for d in ordered}
-    dup: dict[str, str] = {}
-    for i, a in enumerate(ordered):
-        for b in ordered[:i]:
-            if b.case.id not in dup and jaccard(sh[a.case.id], sh[b.case.id]) >= threshold:
-                dup[a.case.id] = b.case.id
-                break
-    return dup
-
-
-def check_independent(drafts: Sequence[Draft], skeptic_llm: LLMClient) -> None:
-    if skeptic_llm.family in {d.family for d in drafts}:
-        raise ValueError("skeptic model family must differ from every author family (R5)")
-
-
-def review(
-    drafts: Sequence[Draft],
-    docs: Mapping[str, str],
-    cfg: SkepticConfig,
-    llm: LLMClient | None = None,
-    ledger: Ledger | None = None,
-    prompt: Prompt | None = None,
-) -> tuple[SkepticVerdict, ...]:
-    """Validity verdict for every draft (deterministic order by test id)."""
-    prompt = prompt or load_prompt(PROMPT_NAME)
-    if llm is not None:
-        check_independent(drafts, llm)
-    dup = _redundant_ids(drafts, cfg.near_dup_jaccard)
-    verdicts: list[SkepticVerdict] = []
-    for d in sorted(drafts, key=lambda x: x.case.id):
-        invalid, ambiguous = _deterministic_flags(d, docs, cfg)
-        if llm is not None and not invalid:
-            ambiguous += _llm_flags(d, docs, llm, prompt)
-        if invalid:
-            validity: Validity = "invalid"
-        elif any(a != "llm_output_not_verbatim" and a != "llm_output_unparseable"
-                 for a in ambiguous):
-            validity = "ambiguous"
-        elif d.case.id in dup:
-            validity = "redundant"
-            ambiguous.append(f"near_duplicate_of:{dup[d.case.id]}")
+def flag_redundant(tests: Sequence[TestCase]) -> dict[str, str]:
+    """duplicate id -> id of the first test with the same normalised question and evidence."""
+    first: dict[tuple[str, str, str], str] = {}
+    out: dict[str, str] = {}
+    for t in tests:
+        k = (_norm(str(t.input.get("question", ""))), str(t.input.get("source_id", "")),
+             str(t.input.get("evidence_quote", "")))
+        if k in first:
+            out[t.id] = first[k]
         else:
-            validity = "valid"
-        verdicts.append(SkepticVerdict(test_id=d.case.id, validity=validity,
-                                       reasons=tuple(invalid + ambiguous),
-                                       llm_assisted=llm is not None))
-    if ledger is not None:
-        for v in verdicts:
-            record_crew_event(
-                ledger, EventType.VALIDITY_VERDICT, PRODUCER, v.model_dump(mode="json"),
-                prompt=prompt if llm is not None else None, llm=llm,
-                kind=ProducerKind.LLM_AGENT if llm is not None else ProducerKind.DETERMINISTIC,
-            )
-    return tuple(verdicts)
+            first[k] = t.id
+    return out
+
+
+class Skeptic:
+    def __init__(self, llm: CrewLLM) -> None:
+        self.llm = llm
+
+    async def assess(
+        self, test: TestCase, source_text: str, author_family: str, ledger: Ledger
+    ) -> Assessment:
+        if self.llm.model.family == author_family:
+            raise ValueError("skeptic must be a different model family than the author (R4)")
+        prompt = load_prompt("skeptic")
+        inp = SkepticInput(question=str(test.input["question"]), source_text=source_text)
+        user = json.dumps(inp.model_dump(), sort_keys=True)
+        raw = await self.llm.complete(prompt.text, user)
+        try:
+            d = parse_json_object(raw)
+            answerable, ambiguous = d.get("answerable") is True, d.get("ambiguous") is True
+            answer = str(d.get("answer", ""))
+        except ValueError:
+            status, reason = "invalid", "skeptic output unparseable"
+        else:
+            if ambiguous:
+                status, reason = "ambiguous", "skeptic flagged ambiguity"
+            elif not answerable:
+                status, reason = "invalid", "source does not answer the question"
+            elif not answers_agree(str(test.input["expected"]), answer):
+                status, reason = "invalid", "re-derived answer disagrees with expected"
+            else:
+                status, reason = "valid", "re-derived answer agrees"
+        a = Assessment(test_id=test.id, status=status, reason=reason)
+        record_draft(ledger, EventType.VALIDITY_VERDICT,
+                     f"validity:{content_id([test.id, self.llm.model.family, raw])}",
+                     {"test_id": test.id, "status": status, "reason": reason,
+                      "author_family": author_family}, prompt, self.llm.model, raw)
+        return a

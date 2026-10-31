@@ -1,59 +1,42 @@
-"""Load risk taxonomies from data files (T2.2). External lists are UNVERIFIED transcriptions."""
+"""Risk taxonomies loaded from fetched primary-source files (R1: cite, do not paraphrase)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-import yaml
-from pydantic import model_validator
+from pydantic import BaseModel, ConfigDict
 
-from qe.core.schemas import Frozen
+from qe.core.ids import sha256_hex
 
-TAXONOMY_DIR = Path(__file__).parent / "taxonomy"
+_DATA = Path(__file__).parent / "data"
 
 
-class Category(Frozen):
+class TaxonomyEntry(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
     id: str
-    name: str
-    description: str
+    title: str
+    url: str
 
 
-class Taxonomy(Frozen):
-    name: str
-    label: str
-    verified: bool
-    categories: tuple[Category, ...]
-
-    @model_validator(mode="after")
-    def _unique_ids(self) -> Taxonomy:
-        ids = [c.id for c in self.categories]
-        if len(ids) != len(set(ids)):
-            raise ValueError(f"duplicate category ids in {self.name}")
-        return self
+class Taxonomy(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    taxonomy: str
+    title: str
+    source_url: str
+    fetched: str
+    status: str
+    note: str
+    entries: tuple[TaxonomyEntry, ...]
+    sha256: str = ""
 
     def ids(self) -> frozenset[str]:
-        return frozenset(c.id for c in self.categories)
+        return frozenset(e.id for e in self.entries)
 
 
-def load_taxonomy(name: str, directory: Path = TAXONOMY_DIR) -> Taxonomy:
-    path = directory / f"{name}.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(f"taxonomy not found: {name}")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return Taxonomy(
-        name=str(data["name"]),
-        label=str(data["label"]),
-        verified=bool(data.get("verified", False)),
-        categories=tuple(Category(**c) for c in data["categories"]),
-    )
-
-
-def load_all(directory: Path = TAXONOMY_DIR) -> tuple[Taxonomy, ...]:
-    return tuple(load_taxonomy(p.stem, directory) for p in sorted(directory.glob("*.yaml")))
-
-
-def allowed_ids(taxonomies: tuple[Taxonomy, ...]) -> frozenset[str]:
-    out: frozenset[str] = frozenset()
-    for t in taxonomies:
-        out |= t.ids()
-    return out
+def load_taxonomy(name: str) -> Taxonomy:
+    path = _DATA / f"{name}.json"
+    if not path.is_file() or path.resolve().parent != _DATA.resolve():
+        raise KeyError(f"unknown taxonomy: {name}")
+    raw = path.read_text(encoding="utf-8")
+    return Taxonomy.model_validate({**json.loads(raw), "sha256": sha256_hex(raw)})
