@@ -1,0 +1,17 @@
+MA-001:
+  describe: "Executive brief on solar panels."
+  requests:
+    - {input: "Write an executive brief on solar panels.", session_id: s1, user: u1}
+MA-002:
+  describe: "Brief on container shipping."
+  requests:
+    - {input: "Brief me on container shipping.", session_id: s1, user: u1}
+MA-003:
+  describe: "Detailed brief on battery recycling."
+  requests:
+    - {input: "Write a detailed brief on battery recycling.", session_id: s1, user: u1}
+MA-004:
+  describe: "Solar brief by u1, then vaccine brief by u2 in another session."
+  requests:
+    - {input: "Brief me on solar panels.", session_id: A, user: u1}
+    - {input: "Brief me on vaccine cold chain.", session_id: B, user: u2}

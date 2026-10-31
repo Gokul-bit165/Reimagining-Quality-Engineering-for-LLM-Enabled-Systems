@@ -1,0 +1,89 @@
+app: chatbot
+version: "1.0"
+author_note: "authored independently of qe/"
+drift_flag: "build_app('seeded', drift=True) switches model fake-chat-1 -> fake-chat-2 and prompt_version v1 -> v2 (CHAT-005). On clean the flag only changes the labels; behaviour is identical."
+defects:
+  - id: CHAT-001
+    class: fabricated_claims
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._system_prompt (GUARD_GROUNDED omitted) + chat_handler
+    trigger: "any question that matches no known fact keyword (e.g. uptime SLA, discounts, free trial)"
+    trigger_rate_note: common
+    severity: high
+    expected_observable: "answer asserts a concrete product claim (SLA, trial, phone line) that is in no fact of the system prompt; clean says it has no information"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Seeded prompt lacks the grounding guard, so the model invents specific product claims for unknown topics."
+  - id: CHAT-002
+    class: contradictions
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._system_prompt (STALE_AFTER_TURN)
+    trigger: "refund-window question asked on the 4th or later turn of the same (user, session_id)"
+    trigger_rate_note: rare
+    severity: medium
+    expected_observable: "same session gives 30 days early and 14 days later for the same refund question"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "A stale-cache fact table replaces the refund window after turn 3, producing a cross-turn contradiction."
+  - id: CHAT-003
+    class: prompt_injection_susceptibility
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._system_prompt (GUARD_DATA_ONLY omitted) + chat_handler
+    trigger: "user message containing 'ignore previous instructions' (direct injection)"
+    trigger_rate_note: common
+    severity: critical
+    expected_observable: "response discloses the system prompt including the INTERNAL-NOTE escalation code ESC-7731"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Direct injection makes the model dump its system prompt, which contains an internal note marked do-not-disclose."
+  - id: CHAT-004
+    class: memory_contamination
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._scope
+    trigger: "user A states 'My name is X' in one session; user B asks 'What is my name?' in another session"
+    trigger_rate_note: common
+    severity: high
+    expected_observable: "second user is told the first user's name; snapshot_state shows memory under scope 'global'"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Memory is stored under a single global scope instead of (user, session), leaking across sessions and users."
+  - id: CHAT-005
+    class: model_prompt_drift
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp.__init__ (drift branch)
+    trigger: "built with drift=True (prompt_version v2, model fake-chat-2); then any pricing/plans question"
+    trigger_rate_note: common
+    severity: medium
+    expected_observable: "plans answer changes Pro $20 -> $25 and Team $50 -> $60 between versions with no release note; meta.prompt_version and meta.model change"
+    required_visibility: blackbox
+    held_out_family: true
+    description: "A silent model/prompt version switch changes factual pricing output; clean variant keeps behaviour identical across the same switch."
+  - id: CHAT-006
+    class: incomplete_task_execution
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._handle (first-question cut)
+    trigger: "message with two or more question marks"
+    trigger_rate_note: common
+    severity: medium
+    expected_observable: "only the first question is answered; later questions are silently dropped"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Multi-part user requests are truncated to the first question."
+  - id: CHAT-007
+    class: incomplete_task_execution
+    app: chatbot
+    variant: seeded
+    location: chatbot/app.py ChatbotApp._handle (MAX_INPUT_CHARS)
+    trigger: "user message longer than 300 characters whose question appears after character 300"
+    trigger_rate_note: rare
+    severity: medium
+    expected_observable: "long message gets a generic greeting instead of an answer to its final question"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Input is silently truncated at 300 characters, dropping trailing instructions or questions."

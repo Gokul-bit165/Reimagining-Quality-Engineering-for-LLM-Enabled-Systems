@@ -1,0 +1,53 @@
+app: multiagent
+version: "1.0"
+author_note: "authored independently of qe/"
+allowed_transitions: "planner->researcher; researcher->writer|planner; writer->END (multiagent/app.py ALLOWED_TRANSITIONS)"
+defects:
+  - id: MA-001
+    class: fabricated_claims
+    app: multiagent
+    variant: seeded
+    location: multiagent/app.py MultiAgentApp._writer_prompt (GUARD_NOTES_ONLY omitted) + writer_handler
+    trigger: "request containing the word 'executive' (executive summary mode)"
+    trigger_rate_note: common
+    severity: high
+    expected_observable: "Executive summary line states '92 percent adoption by 2030', supported by no research note and carrying no note id"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Writer without the notes-only guard adds an invented statistic to the executive summary."
+  - id: MA-002
+    class: wrong_agent_transitions
+    app: multiagent
+    variant: seeded
+    location: multiagent/app.py MultiAgentApp._handle (SKIP_RESEARCH_TOPIC)
+    trigger: "brief requested on 'container shipping'"
+    trigger_rate_note: rare
+    severity: high
+    expected_observable: "handoff planner->writer (not in allowed transitions); no researcher handoff or kb_lookup; brief has no cited notes"
+    required_visibility: trace
+    held_out_family: true
+    description: "Orchestrator skips the researcher for one topic, so the writer produces an unsupported, uncited brief."
+  - id: MA-003
+    class: incomplete_task_execution
+    app: multiagent
+    variant: seeded
+    location: multiagent/app.py MultiAgentApp._research (SEEDED_RESEARCH_CAP)
+    trigger: "request asking for a 'detailed' brief (planner emits 4 steps incl. risks)"
+    trigger_rate_note: rare
+    severity: medium
+    expected_observable: "planned 'risks' step is never researched or written; brief lacks the risk note"
+    required_visibility: trace
+    held_out_family: false
+    description: "Researcher only handles the first three plan steps, silently dropping the fourth."
+  - id: MA-004
+    class: memory_contamination
+    app: multiagent
+    variant: seeded
+    location: multiagent/app.py MultiAgentApp._handle (shared memory never reset)
+    trigger: "any second request after a first request, in any session or user"
+    trigger_rate_note: common
+    severity: high
+    expected_observable: "second brief contains and cites notes from the first request's topic (valid ids that do not support the new topic)"
+    required_visibility: blackbox
+    held_out_family: false
+    description: "Shared agent memory persists across requests, sessions and users, contaminating later briefs."
