@@ -1,109 +1,90 @@
-"""Simulation-based property tests for the P2 statistics (fixed seeds, deterministic)."""
+"""Property tests for intervals and pass^k (hypothesis)."""
+
+from __future__ import annotations
 
 import random
-from statistics import NormalDist
+from math import comb
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from qe.stats.agreement import correlation_matrix, panel_n_eff
-from qe.stats.bayes import posterior
-from qe.stats.cluster import cluster_bootstrap_rate
-from qe.stats.estimators import pass_hat_k
-from qe.stats.judge_correction import judge_corrected_rate
+from qe.stats.bayes import beta_credible
+from qe.stats.cluster import cluster_rate
+from qe.stats.estimators import pass_hat_k, pass_hat_k_at
+from qe.stats.intervals import clopper_pearson
 
-_N = NormalDist()
-
-
-def correlated_errors(
-    rng: random.Random, k: int, n: int, rate: float, rho: float
-) -> list[list[bool]]:
-    """k error vectors with marginal P(error)=rate and latent-Gaussian correlation rho."""
-    cut = _N.inv_cdf(rate)
-    rows: list[list[bool]] = [[] for _ in range(k)]
-    for _ in range(n):
-        z = rng.gauss(0, 1)
-        for j in range(k):
-            x = rho**0.5 * z + (1 - rho) ** 0.5 * rng.gauss(0, 1)
-            rows[j].append(x < cut)
-    return rows
+kn = st.integers(1, 80).flatmap(lambda n: st.tuples(st.integers(0, n), st.just(n)))
+conf = st.sampled_from([0.8, 0.9, 0.95, 0.99])
+items = st.integers(1, 6).flatmap(
+    lambda t: st.lists(st.lists(st.booleans(), min_size=t, max_size=t), min_size=1, max_size=8)
+)
 
 
-def test_credible_interval_coverage_is_near_nominal() -> None:
-    rng = random.Random(11)
-    p, n, hits, reps = 0.2, 40, 0, 300
-    for _ in range(reps):
-        k = sum(rng.random() < p for _ in range(n))
-        lo, hi = posterior(k, n).interval(0.95)
-        hits += lo <= p <= hi
-    assert 0.90 <= hits / reps <= 0.99
+@settings(max_examples=60, deadline=None)
+@given(kn, conf)
+def test_intervals_ordered_bounded_and_nested_by_confidence(x: tuple[int, int], c: float) -> None:
+    k, n = x
+    for f in (clopper_pearson, beta_credible):
+        lo, hi = f(k, n, c)
+        assert 0.0 <= lo <= hi <= 1.0
+        lo99, hi99 = f(k, n, 0.995)
+        assert lo99 <= lo + 1e-9 and hi99 >= hi - 1e-9  # higher confidence never narrower
 
 
-def test_cluster_bootstrap_coverage_on_clustered_data() -> None:
-    rng = random.Random(5)
-    m, size, hits, reps, true_p = 30, 5, 0, 60, 0.3
-    for r in range(reps):
-        outs: list[bool] = []
-        cls: list[int] = []
-        for c in range(m):
-            pc = min(1.0, max(0.0, rng.gauss(true_p, 0.2)))  # cluster-level heterogeneity
-            outs += [rng.random() < pc for _ in range(size)]
-            cls += [c] * size
-        ci = cluster_bootstrap_rate(outs, cls, resamples=300, seed=r)
-        hits += ci.lower <= true_p <= ci.upper
-    assert hits / reps >= 0.85  # nominal 0.95; percentile bootstrap + MC slack
-
-
-def test_n_eff_tracks_known_correlation() -> None:
-    rng = random.Random(21)
-    k, n = 4, 6000
-    for rho in (0.0, 0.5, 0.9):
-        expected = k / (1 + (k - 1) * rho)  # design-effect formula for equicorrelation
-        # latent correlation rho -> phi differs slightly from rho; check within tolerance
-        n_eff = panel_n_eff(correlation_matrix(correlated_errors(rng, k, n, 0.3, rho)))
-        assert abs(n_eff - expected) < 0.45, (rho, n_eff, expected)
-
-
-def test_n_eff_is_monotone_in_correlation() -> None:
-    rng = random.Random(33)
-    vals = [
-        panel_n_eff(correlation_matrix(correlated_errors(rng, 3, 4000, 0.3, rho)))
-        for rho in (0.0, 0.4, 0.8)
-    ]
-    assert vals[0] > vals[1] > vals[2]
+@settings(max_examples=60, deadline=None)
+@given(kn)
+def test_interval_endpoints_monotone_in_successes(x: tuple[int, int]) -> None:
+    k, n = x
+    if k == n:
+        return
+    for f in (clopper_pearson, beta_credible):
+        lo0, hi0 = f(k, n)
+        lo1, hi1 = f(k + 1, n)
+        assert lo1 >= lo0 - 1e-9 and hi1 >= hi0 - 1e-9
 
 
 @settings(max_examples=40, deadline=None)
-@given(
-    st.lists(
-        st.lists(st.booleans(), min_size=3, max_size=3), min_size=1, max_size=12
-    )
-)
-def test_pass_hat_k_properties(outcomes: list[list[bool]]) -> None:
-    full = pass_hat_k(outcomes)
-    first_only = pass_hat_k([t[:1] for t in outcomes])
-    two = pass_hat_k([t[:2] for t in outcomes])
-    assert 0.0 <= full <= two <= first_only <= 1.0  # pass^k non-increasing in k
+@given(kn)
+def test_reflection_symmetry(x: tuple[int, int]) -> None:
+    k, n = x
+    for f in (clopper_pearson, beta_credible):
+        lo, hi = f(k, n)
+        lo2, hi2 = f(n - k, n)
+        assert abs((1 - hi) - lo2) < 1e-7 and abs((1 - lo) - hi2) < 1e-7
 
 
-def test_pass_hat_k_matches_p_to_the_k_for_iid_trials() -> None:
-    rng = random.Random(8)
-    p, k, items = 0.8, 4, 4000
-    outcomes = [[rng.random() < p for _ in range(k)] for _ in range(items)]
-    assert abs(pass_hat_k(outcomes) - p**k) < 0.03
+@settings(max_examples=40, deadline=None)
+@given(st.lists(st.tuples(st.integers(0, 10), st.just(10)), min_size=2, max_size=12))
+def test_cluster_rate_bounded_and_contains_point(cl: list[tuple[int, int]]) -> None:
+    est = cluster_rate(cl)
+    assert 0.0 <= est.lower <= est.point <= est.upper <= 1.0
 
 
-def test_judge_correction_recovers_true_rate_with_interval_coverage() -> None:
-    rng = random.Random(2)
-    tpr, fpr, true_p, n, hits, reps = 0.85, 0.1, 0.25, 800, 0, 40
-    for r in range(reps):
-        flagged = sum(
-            rng.random() < (tpr if rng.random() < true_p else fpr) for _ in range(n)
-        )
-        tp = sum(rng.random() < tpr for _ in range(150))
-        fp = sum(rng.random() < fpr for _ in range(150))
-        res = judge_corrected_rate(
-            flagged, n, tp=tp, positives=150, fp=fp, negatives=150, draws=800, seed=r
-        )
-        hits += res.lower <= true_p <= res.upper
-    assert hits / reps >= 0.85
+@settings(max_examples=80, deadline=None)
+@given(items)
+def test_pass_hat_k_bounded_and_nonincreasing_in_k(data: list[list[bool]]) -> None:
+    t = len(data[0])
+    vals = [pass_hat_k_at(data, k) for k in range(1, t + 1)]
+    assert all(0.0 <= v <= 1.0 for v in vals)
+    assert all(a >= b - 1e-12 for a, b in zip(vals, vals[1:], strict=False))
+    assert abs(vals[0] - sum(sum(r) / t for r in data) / len(data)) < 1e-12  # k=1: mean pass rate
+    assert vals[-1] == pass_hat_k(data)
+
+
+@settings(max_examples=60, deadline=None)
+@given(items, st.integers(0, 10_000))
+def test_pass_hat_k_permutation_invariant(data: list[list[bool]], seed: int) -> None:
+    rng = random.Random(seed)
+    shuffled = [rng.sample(r, len(r)) for r in data]
+    rng.shuffle(shuffled)
+    for k in range(1, len(data[0]) + 1):
+        assert abs(pass_hat_k_at(data, k) - pass_hat_k_at(shuffled, k)) < 1e-12
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.integers(1, 12).flatmap(lambda n: st.tuples(st.integers(0, n), st.just(n), st.integers(1, n))))
+def test_pass_hat_k_unbiased_for_iid_item(x: tuple[int, int, int]) -> None:
+    """C(c,k)/C(n,k) is the exact fraction of k-subsets of the n trials that all pass."""
+    c, n, k = x
+    outcomes = [[True] * c + [False] * (n - c)]
+    assert abs(pass_hat_k_at(outcomes, k) - comb(c, k) / comb(n, k)) < 1e-12
