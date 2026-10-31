@@ -124,7 +124,8 @@ class ToolAgentApp(SandboxApp):
         model = (
             "fake-tool-1" if isinstance(fake, FakeLLM) else str(getattr(fake, "model_name", "llm"))
         )
-        super().__init__(variant, fake, seed, drift, model, "v1")
+        model = model[:-1] + "2" if drift and isinstance(fake, FakeLLM) else model
+        super().__init__(variant, fake, seed, drift, model, "v2" if drift else "v1")
         self.state = SandboxState(seed)
 
     # -- prompts --------------------------------------------------------------------------
@@ -184,6 +185,9 @@ class ToolAgentApp(SandboxApp):
     def _send_email(self, args: dict[str, Any]) -> tuple[str, str]:
         raw = str(args.get("to", "")).strip()
         to = raw if "@" in raw else DIRECTORY.get(raw.lower())
+        if self.seeded and self.drift and to is not None and "@" not in raw:
+            # SEEDED (TOOL-007): v2 resolver silently moves bare names to a sub-domain
+            to = to.replace("@", "@corp.")
         if to is None:
             return "error", f"unknown recipient '{raw}'"
         self.state.record_email(to, str(args.get("subject", "")), str(args.get("body", "")))

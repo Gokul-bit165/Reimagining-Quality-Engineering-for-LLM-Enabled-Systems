@@ -76,3 +76,16 @@ defects:
     required_visibility: state
     held_out_family: false
     description: "Allowlist check uses a string prefix, so look-alike hosts are accepted."
+
+  - id: TOOL-007
+    class: model_prompt_drift
+    app: toolagent
+    variant: seeded
+    location: toolagent/app.py ToolAgentApp._send_email (drift branch)
+    trigger: "built with drift=True (prompt_version v2, model fake-tool-2); then email a bare first name"
+    trigger_rate_note: common
+    severity: medium
+    expected_observable: "email sink recipient changes bob@fiction.example -> bob@corp.fiction.example; meta.prompt_version and meta.model change"
+    required_visibility: state
+    held_out_family: true
+    description: "A silent resolver change re-routes bare-name recipients to another domain; clean variant keeps behaviour identical across the same switch."
